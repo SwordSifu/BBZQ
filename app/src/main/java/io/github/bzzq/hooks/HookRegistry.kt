@@ -17,6 +17,7 @@ object HookRegistry {
             GsonSplashAdHook(packageName),
             VideoFeatureUnlockHook(packageName),
             StoryVideoAdHook(packageName),
+            MiniGameRewardAdHook(packageName),
         )
     }
 
