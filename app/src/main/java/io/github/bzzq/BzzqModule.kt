@@ -19,7 +19,7 @@ class BzzqModule : XposedModule() {
     override fun onPackageReady(param: PackageReadyParam) {
         if (!isNpatchFramework) return
 
-        HookRegistry.handlePackageReady(param) { message, throwable ->
+        HookRegistry.handlePackageReady(this, param) { message, throwable ->
             if (throwable == null) {
                 log(Log.INFO, LOG_TAG, message)
             } else {
