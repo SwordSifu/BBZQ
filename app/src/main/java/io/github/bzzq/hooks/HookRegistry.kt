@@ -15,6 +15,7 @@ object HookRegistry {
         listOf(
             PackageLoadLogHook(packageName),
             GsonSplashAdHook(packageName),
+            VideoFeatureUnlockHook(packageName),
         )
     }
 
