@@ -75,41 +75,65 @@ class SettingsActivity : Activity() {
         
         root.addView(createFeatureSwitch(
             R.string.skip_splash_ad_title,
+            R.string.skip_splash_ad_summary,
             ModuleSettings.KEY_SKIP_SPLASH_AD_ENABLED,
             true,
         ))
         root.addView(createFeatureSwitch(
             R.string.unlock_video_features_title,
+            R.string.unlock_video_features_summary,
             ModuleSettings.KEY_UNLOCK_VIDEO_FEATURES_ENABLED,
             true,
         ))
         root.addView(createFeatureSwitch(
             R.string.auto_like_video_detail_title,
+            R.string.auto_like_video_detail_summary,
             ModuleSettings.KEY_AUTO_LIKE_VIDEO_DETAIL_ENABLED,
             false,
         ))
         root.addView(createFeatureSwitch(
             R.string.fix_live_quality_url_title,
+            R.string.fix_live_quality_url_summary,
             ModuleSettings.KEY_FIX_LIVE_QUALITY_URL_ENABLED,
             false,
         ))
         root.addView(createFeatureSwitch(
             R.string.skip_mini_game_reward_ad_title,
+            R.string.skip_mini_game_reward_ad_summary,
             ModuleSettings.KEY_SKIP_MINI_GAME_REWARD_AD_ENABLED,
             true,
         ))
         root.addView(createFeatureSwitch(
             R.string.block_live_reservation_title,
+            R.string.block_live_reservation_summary,
             ModuleSettings.KEY_BLOCK_LIVE_RESERVATION_ENABLED,
             false,
         ))
 
         root.addView(createSectionTitle(getString(R.string.purify_story_video_ad_title)))
 
-        storyVideoAdSwitch = Switch(this).apply {
+        val storyAdHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        val storyAdTextLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        storyAdTextLayout.addView(TextView(this).apply {
             text = "启用过滤"
             textSize = 18f
-            setPadding(0, dp(12), 0, dp(8))
+            setTextColor(Color.BLACK)
+        })
+        storyAdTextLayout.addView(TextView(this).apply {
+            text = getString(R.string.purify_story_video_ad_summary)
+            textSize = 14f
+            setTextColor(Color.GRAY)
+        })
+        storyAdHeader.addView(storyAdTextLayout)
+
+        storyVideoAdSwitch = Switch(this).apply {
             setOnCheckedChangeListener { _, isChecked ->
                 if (refreshing) return@setOnCheckedChangeListener
                 prefs.edit().putBoolean(ModuleSettings.KEY_PURIFY_STORY_VIDEO_AD_ENABLED, isChecked).apply()
@@ -124,7 +148,8 @@ class SettingsActivity : Activity() {
                 refresh()
             }
         }
-        root.addView(storyVideoAdSwitch)
+        storyAdHeader.addView(storyVideoAdSwitch)
+        root.addView(storyAdHeader)
 
         val tagsLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -166,16 +191,41 @@ class SettingsActivity : Activity() {
         }
     }
 
-    private fun createFeatureSwitch(titleRes: Int, key: String, defaultValue: Boolean): Switch {
-        return Switch(this).apply {
+    private fun createFeatureSwitch(titleRes: Int, summaryRes: Int, key: String, defaultValue: Boolean): LinearLayout {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, dp(12))
+        }
+
+        val textLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, 0, dp(16), 0)
+        }
+
+        textLayout.addView(TextView(this).apply {
             text = getString(titleRes)
             textSize = 18f
-            setPadding(0, dp(12), 0, dp(12))
+            setTextColor(Color.BLACK)
+        })
+        textLayout.addView(TextView(this).apply {
+            text = getString(summaryRes)
+            textSize = 14f
+            setTextColor(Color.GRAY)
+        })
+
+        layout.addView(textLayout)
+
+        val switchView = Switch(this).apply {
             isChecked = prefs.getBoolean(key, defaultValue)
             setOnCheckedChangeListener { _, isChecked ->
                 if (!refreshing) prefs.edit().putBoolean(key, isChecked).apply()
             }
         }
+        layout.addView(switchView)
+
+        return layout
     }
 
     private fun createClickableItem(titleRes: Int, summaryRes: Int, onClick: () -> Unit): LinearLayout {

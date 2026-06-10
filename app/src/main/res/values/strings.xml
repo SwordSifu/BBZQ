@@ -2,15 +2,22 @@
     <string name="app_name">bzzq</string>
     <string name="xposed_description">API 101 research module active only on NPatch, Vector, or LSPosed versions newer than 7700.</string>
     <string name="skip_splash_ad_title">跳过开屏广告</string>
+    <string name="skip_splash_ad_summary">移除启动时的开屏广告，加快进入速度</string>
     <string name="unlock_video_features_title">解锁视频权益</string>
+    <string name="unlock_video_features_summary">尝试解锁会员画质试看及 VIP 专属流限制</string>
     <string name="auto_like_video_detail_title">视频详情页自动点赞</string>
+    <string name="auto_like_video_detail_summary">进入视频详情页时自动点击点赞按钮</string>
     <string name="fix_live_quality_url_title">直播画质 URL 修正</string>
+    <string name="fix_live_quality_url_summary">修复部分版本直播间画质无法切换或 URL 错误的问题</string>
     <string name="skip_mini_game_reward_ad_title">跳过小游戏奖励广告</string>
+    <string name="skip_mini_game_reward_ad_summary">自动跳过或关闭小游戏中的激励视频广告</string>
     <string name="block_live_reservation_title">屏蔽直播预约</string>
+    <string name="block_live_reservation_summary">移除视频详情页中烦人的直播预约悬浮窗或卡片</string>
     <string name="copy_access_key_title">复制 access_key</string>
     <string name="copy_access_key_summary">点击复制当前登录账户的 access_key</string>
     <string name="copy_access_key_not_found">未找到 access_key，请确保已登录 Bilibili</string>
     <string name="copy_access_key_success">已复制 access_key 到剪贴板</string>
     <string name="purify_story_video_ad_title">竖屏视频广告净化</string>
+    <string name="purify_story_video_ad_summary">过滤竖屏视频流中的广告、购物及推广内容</string>
     <string name="purify_story_video_ad_blocked_count">累计拦截：%1$d</string>
 </resources>
