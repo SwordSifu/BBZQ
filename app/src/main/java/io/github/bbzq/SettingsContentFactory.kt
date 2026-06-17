@@ -91,7 +91,7 @@ class SettingsContentFactory(
         return listOf(
             createSwitchRow(
                 "去除长按复制",
-                "禁用评论、动态、视频简介等场景里长按后直接复制到剪贴板的行为，减少误触。",
+                "禁用应用内各场景里长按后直接复制到剪贴板的行为，减少误触。",
                 ModuleSettings.KEY_DISABLE_LONG_PRESS_COPY_ENABLED,
                 false,
             ) {
@@ -99,7 +99,7 @@ class SettingsContentFactory(
             },
             createSwitchRow(
                 "长按自由复制",
-                "需先开启“去除长按复制”，长按文本时才会弹出可自由选择的文本窗口。",
+                "需先开启“去除长按复制”，拦截到复制动作时弹出可自由选择文本的窗口。",
                 ModuleSettings.KEY_ENHANCE_LONG_PRESS_COPY_ENABLED,
                 false,
             ) {
