@@ -8,10 +8,15 @@ import android.os.Bundle
 import android.widget.Toast
 
 object ModuleSettingsNavigator {
-    fun open(context: Context, runtimeValues: Bundle? = null) {
+    fun open(
+        context: Context,
+        runtimeValues: Bundle? = null,
+        page: String = SettingsActivity.PAGE_ROOT,
+    ) {
         val intent = Intent().apply {
             component = ComponentName(MODULE_PACKAGE, SETTINGS_ACTIVITY)
             runtimeValues?.let { putExtra(RuntimeEnvironmentInfo.EXTRA_RUNTIME_VALUES, it) }
+            putExtra(SettingsActivity.EXTRA_PAGE, page)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             if (context !is Activity) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

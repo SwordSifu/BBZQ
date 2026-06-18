@@ -27,8 +27,20 @@ class SettingsActivity : Activity() {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         RuntimeEnvironmentInfo.applyRuntimeSnapshotFromIntent(intent, prefs)
 
-        val toolbar = createToolbar()
-        val content = SettingsContentFactory(this, prefs).createScrollView()
+        val page = intent.getStringExtra(EXTRA_PAGE) ?: PAGE_ROOT
+        val toolbar = createToolbar(page)
+        val content = SettingsContentFactory(
+            context = this,
+            prefs = prefs,
+            page = page,
+            openPage = { targetPage ->
+                ModuleSettingsNavigator.open(
+                    context = this,
+                    runtimeValues = intent.getBundleExtra(RuntimeEnvironmentInfo.EXTRA_RUNTIME_VALUES),
+                    page = targetPage,
+                )
+            },
+        ).createScrollView()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#F6F7F8"))
@@ -50,9 +62,10 @@ class SettingsActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         RuntimeEnvironmentInfo.applyRuntimeSnapshotFromIntent(intent, prefs)
+        recreate()
     }
 
-    private fun createToolbar(): LinearLayout {
+    private fun createToolbar(page: String): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -61,7 +74,7 @@ class SettingsActivity : Activity() {
             elevation = dp(2).toFloat()
 
             addView(TextView(this@SettingsActivity).apply {
-                text = "BBZQ 设置"
+                text = toolbarTitle(page)
                 textSize = 20f
                 setTextColor(Color.parseColor("#18191C"))
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -77,6 +90,12 @@ class SettingsActivity : Activity() {
                 setOnClickListener { finish() }
             })
         }
+    }
+
+    private fun toolbarTitle(page: String): String = when (page) {
+        PAGE_SKIP_VIDEO_AD_SWITCH -> "空降助手功能开关"
+        PAGE_SKIP_VIDEO_AD_CATEGORY -> "空降助手分类设定"
+        else -> "BBZQ 设置"
     }
 
     private fun applyWindowInsets(
@@ -114,4 +133,11 @@ class SettingsActivity : Activity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    companion object {
+        const val EXTRA_PAGE = "settings_page"
+        const val PAGE_ROOT = "root"
+        const val PAGE_SKIP_VIDEO_AD_SWITCH = "skip_video_ad_switch"
+        const val PAGE_SKIP_VIDEO_AD_CATEGORY = "skip_video_ad_category"
+    }
 }
