@@ -11,6 +11,7 @@ import io.github.bbzq.roaming.hook.RewardAdHook
 import io.github.bbzq.roaming.hook.SettingHook
 import io.github.bbzq.roaming.hook.ShareHook
 import io.github.bbzq.roaming.hook.SkipVideoAdHook
+import io.github.bbzq.roaming.hook.SkipVideoAdProgressHook
 import io.github.bbzq.roaming.hook.SplashAdHook
 import io.github.bbzq.roaming.hook.StoryPlayerAdHook
 import io.github.bbzq.roaming.hook.VideoDetailBannerAdHook
@@ -56,6 +57,7 @@ object RoamingRuntime {
                 ::StoryPlayerAdHook,
                 ::VideoDetailBannerAdHook,
                 ::SkipVideoAdHook,
+                ::SkipVideoAdProgressHook,
                 ::RewardAdHook,
             )
         }

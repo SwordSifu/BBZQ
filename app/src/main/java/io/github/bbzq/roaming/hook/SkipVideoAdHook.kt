@@ -23,14 +23,14 @@ import java.util.Locale
 
 class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     @Volatile private var lastSeekTime = 0L
-    @Volatile private var duration = -1
+    @Volatile private var duration = -1L
     @Volatile private var segments: List<BilibiliSponsorBlock.Segment> = emptyList()
     @Volatile private var segmentsKey = ""
     @Volatile private var loadingSegments = false
     @Volatile private var bvid = ""
     @Volatile private var cid = ""
 
-    private var waitTime = 1000L
+    private var waitTime = CHECK_INTERVAL_MS
     private var playerRef: WeakReference<Any>? = null
     private val player: Any?
         get() = playerRef?.get()
@@ -115,11 +115,13 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
         bvid = nextBvid
         cid = nextCid
-        duration = -1
+        duration = -1L
         segments = emptyList()
+        SkipVideoAdState.durationMs = 0L
+        SkipVideoAdState.segments = emptyList()
         segmentsKey = ""
         loadingSegments = false
-        waitTime = 1000L
+        waitTime = CHECK_INTERVAL_MS
         fetchSegmentsIfNeeded()
     }
 
@@ -137,7 +139,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             .filter {
                 it.name == "getCurrentPosition" &&
                     it.parameterCount == 0 &&
-                    it.returnType == Int::class.javaPrimitiveType
+                    it.returnType.isNumericType()
             }
             .distinctBy(Method::toGenericString)
             .toList()
@@ -150,14 +152,17 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     val service = param.thisObject ?: return@hookAfter
                     playerRef = WeakReference(service)
                     if (duration <= 0) {
-                        duration = service.callMethod("getDuration").asInt() ?: -1
+                        duration = service.callMethod("getDuration").asLong() ?: -1L
+                        if (duration > 0) {
+                            SkipVideoAdState.durationMs = duration
+                        }
                     }
                     fetchSegmentsIfNeeded()
-                    val position = param.result.asInt() ?: return@hookAfter
+                    val position = param.result.asLong() ?: return@hookAfter
                     val now = System.currentTimeMillis()
                     if (now - lastSeekTime > waitTime) {
                         lastSeekTime = now
-                        waitTime = if (seekTo(position)) 3000L else 1000L
+                        waitTime = if (seekTo(position)) SKIP_COOLDOWN_MS else CHECK_INTERVAL_MS
                     }
                 }
                 count++
@@ -187,11 +192,16 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     playerRef = WeakReference(service)
                     val state = param.args.firstOrNull().asInt() ?: return@hookAfter
                     if (state in 3..5 && duration <= 0) {
-                        duration = service.callMethod("getDuration").asInt() ?: -1
+                        duration = service.callMethod("getDuration").asLong() ?: -1L
+                        if (duration > 0) {
+                            SkipVideoAdState.durationMs = duration
+                        }
                     }
                     if (state == 2) {
-                        duration = -1
+                        duration = -1L
                         segments = emptyList()
+                        SkipVideoAdState.durationMs = 0L
+                        SkipVideoAdState.segments = emptyList()
                         segmentsKey = ""
                         fetchSegmentsIfNeeded()
                     }
@@ -242,16 +252,16 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun Class<*>.isPlayerCoreService(serviceInterface: Class<*>?): Boolean {
         if (isInterface || Modifier.isAbstract(modifiers)) return false
         if (serviceInterface?.isAssignableFrom(this) == true) return true
-        return hasNoArgIntMethod("getCurrentPosition") &&
-            hasNoArgIntMethod("getDuration") &&
+        return hasNoArgNumericMethod("getCurrentPosition") &&
+            hasNoArgNumericMethod("getDuration") &&
             allMethods().any { it.isSeekToMethod() }
     }
 
-    private fun Class<*>.hasNoArgIntMethod(name: String): Boolean =
+    private fun Class<*>.hasNoArgNumericMethod(name: String): Boolean =
         allMethods().any {
             it.name == name &&
                 it.parameterCount == 0 &&
-                it.returnType == Int::class.javaPrimitiveType
+                it.returnType.isNumericType()
         }
 
     private fun fetchSegmentsIfNeeded() {
@@ -279,11 +289,12 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
             if (key == videoKey()) {
                 segments = result.segments
+                SkipVideoAdState.segments = result.segments
                 when (result.status) {
                     BilibiliSponsorBlock.FetchStatus.SUCCESS -> {
                         log("SkipVideoAd loaded ${result.segments.size} segment(s) for $key")
                         if (result.segments.isNotEmpty()) {
-                            toast("\u5df2\u52a0\u8f7d ${result.segments.size} \u4e2a\u7a7a\u964d\u7247\u6bb5")
+                            toast("\u5df2\u52a0\u8f7d ${result.segments.size} \u4e2a\u7a7a\u964d\u7247\u6bb5${loadedCategorySuffix(result.segments)}")
                         }
                     }
                     BilibiliSponsorBlock.FetchStatus.EMPTY,
@@ -305,44 +316,52 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun videoKey(): String = "$bvid/$cid"
 
-    private fun seekTo(position: Int): Boolean {
+    private fun seekTo(position: Long): Boolean {
         if (!isEnabled()) return false
         val videoDuration = duration
         if (videoDuration > 0 && position > videoDuration) return false
 
         segments.forEach { segment ->
-            val start = (segment.segment[0] * 1000).toInt()
-            val end = (segment.segment[1] * 1000).toInt()
-            if (position in start until end) {
-                seekPlayerTo(end)
-                return true
+            val start = (segment.segment[0] * 1000).toLong()
+            val end = (segment.segment[1] * 1000).toLong()
+            if (position >= start - PRE_SKIP_THRESHOLD_MS && position < end) {
+                return seekPlayerTo(end, segment)
             }
         }
         return false
     }
 
-    private fun seekPlayerTo(position: Int) {
-        val service = player ?: return
+    private fun seekPlayerTo(position: Long, segment: BilibiliSponsorBlock.Segment): Boolean {
+        val service = player ?: return false
         val method = service.javaClass.allMethods()
             .firstOrNull { it.isSeekToMethod() }
-            ?: return
+            ?: return false
         val args = when (method.parameterCount) {
-            1 -> arrayOf<Any>(position)
-            2 -> arrayOf<Any>(position, true)
-            else -> return
+            1 -> arrayOf(position.coerceToMethodType(method.parameterTypes[0]))
+            2 -> arrayOf(position.coerceToMethodType(method.parameterTypes[0]), true)
+            else -> return false
         }
-        runCatching { method.invoke(service, *args) }
-            .onFailure { log("SkipVideoAd seekTo failed", it) }
+        return runCatching {
+            method.invoke(service, *args)
+            log("SkipVideoAd skipped ${segment.category} to $position")
+            toast(skipToastMessage(segment))
+            true
+        }.onFailure {
+            log("SkipVideoAd seekTo failed", it)
+        }.getOrDefault(false)
     }
 
     private fun Method.isSeekToMethod(): Boolean {
         if (name != "seekTo" || parameterCount !in 1..2) return false
-        if (!parameterTypes[0].isIntType()) return false
+        if (!parameterTypes[0].isNumericType()) return false
         return parameterCount == 1 || parameterTypes[1].isBooleanType()
     }
 
-    private fun Class<*>.isIntType(): Boolean =
-        this == Int::class.javaPrimitiveType || this == Int::class.javaObjectType
+    private fun Class<*>.isNumericType(): Boolean =
+        this == Int::class.javaPrimitiveType ||
+            this == Int::class.javaObjectType ||
+            this == Long::class.javaPrimitiveType ||
+            this == Long::class.javaObjectType
 
     private fun Class<*>.isBooleanType(): Boolean =
         this == Boolean::class.javaPrimitiveType || this == Boolean::class.javaObjectType
@@ -368,6 +387,33 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         else -> null
     }
 
+    private fun Long.coerceToMethodType(type: Class<*>): Any =
+        when (type) {
+            Int::class.javaPrimitiveType,
+            Int::class.javaObjectType,
+            Short::class.javaPrimitiveType,
+            Short::class.javaObjectType -> toInt()
+            else -> this
+        }
+
+    private fun loadedCategorySuffix(segments: List<BilibiliSponsorBlock.Segment>): String {
+        val labels = segments
+            .map(::categoryLabel)
+            .distinct()
+        if (labels.isEmpty()) return ""
+        val preview = labels.take(3).joinToString("、")
+        return if (labels.size > 3) "（$preview 等）" else "（$preview）"
+    }
+
+    private fun skipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
+        "\u5df2\u8df3\u8fc7${categoryLabel(segment)}"
+
+    private fun categoryLabel(segment: BilibiliSponsorBlock.Segment): String =
+        ModuleSettings.skipVideoAdCategories
+            .firstOrNull { it.key == segment.category }
+            ?.label
+            ?: segment.category
+
     private fun av2bv(aid: Long): String {
         val result = CharArray(12) { if (it < 3) "BV1"[it] else '0' }
         var value = ((1L shl 51) or aid) xor 23442827791579L
@@ -387,6 +433,9 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private const val MOSS_RESPONSE_HANDLER = "com.bilibili.lib.moss.api.MossResponseHandler"
         private const val PLAYER_CORE_SERVICE_INTERFACE = "tv.danmaku.biliplayerv2.service.IPlayerCoreService"
         private const val BV_TABLE = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf"
+        private const val CHECK_INTERVAL_MS = 250L
+        private const val PRE_SKIP_THRESHOLD_MS = 300L
+        private const val SKIP_COOLDOWN_MS = 1000L
 
         private val PLAYER_CORE_SERVICE_CANDIDATES = arrayOf(
             "tv.danmaku.biliplayerv2.service.PlayerCoreService",
