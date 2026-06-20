@@ -5,6 +5,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
 import io.github.bbzq.ModuleSettings
+import io.github.bbzq.SkipVideoAdMode
 import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.RoamingEnv
 import io.github.bbzq.feats.from
@@ -69,6 +70,9 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         val radius = (bottom - top) / 2f
 
         segments.forEach { segment ->
+            if (ModuleSettings.getSkipVideoAdMode(prefs, segment.category) == SkipVideoAdMode.IGNORE) {
+                return@forEach
+            }
             val startX = view.paddingLeft + ((segment.segment[0] * 1000f) / durationMs) * availableWidth
             val endX = view.paddingLeft + ((segment.segment[1] * 1000f) / durationMs) * availableWidth
             val safeStart = startX.coerceIn(view.paddingLeft.toFloat(), (width - view.paddingRight).toFloat())
@@ -82,17 +86,11 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
     }
 
-    private fun colorFor(category: String): Int = when (category) {
-        "sponsor" -> 0xFFF44336.toInt()
-        "selfpromo" -> 0xFFFF9800.toInt()
-        "intro" -> 0xFF4CAF50.toInt()
-        "outro" -> 0xFF2196F3.toInt()
-        "interaction" -> 0xFF9C27B0.toInt()
-        "preview" -> 0xFFFFC107.toInt()
-        "filler" -> 0xFF795548.toInt()
-        "music_offtopic" -> 0xFF009688.toInt()
-        else -> 0xFFFB7299.toInt()
-    }
+    private fun colorFor(category: String): Int =
+        ModuleSettings.skipVideoAdCategories
+            .firstOrNull { it.key == category }
+            ?.color
+            ?: 0xFFFB7299.toInt()
 
     private companion object {
         private const val MIN_MARKER_WIDTH_PX = 3f

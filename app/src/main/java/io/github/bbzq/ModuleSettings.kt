@@ -11,6 +11,7 @@ object ModuleSettings {
     const val KEY_SKIP_SPLASH_AD_ENABLED = "skip_splash_ad_enabled"
     const val KEY_SKIP_VIDEO_AD_ENABLED = "skip_video_ad_enabled"
     const val KEY_SKIP_VIDEO_AD_CATEGORIES = "skip_video_ad_categories"
+    const val KEY_SKIP_VIDEO_AD_MODE_PREFIX = "skip_video_ad_mode_"
     const val KEY_SKIP_VIDEO_AD_SETTINGS_VISIBLE = "skip_video_ad_settings_visible"
     const val KEY_ACCESS_KEY_SETTINGS_VISIBLE = "access_key_settings_visible"
     const val KEY_BLOCK_VIDEO_DETAIL_BANNER_AD_ENABLED = "block_video_detail_banner_ad_enabled"
@@ -59,15 +60,17 @@ object ModuleSettings {
     const val KEY_RUNTIME_LAST_UPDATE_TIME = "runtime_last_update_time"
 
     val defaultStoryVideoAdTags = setOf("ad")
-    val defaultSkipVideoAdCategories = setOf(
-        "sponsor",
-        "selfpromo",
-        "intro",
-        "outro",
-        "interaction",
-        "preview",
-        "filler",
-        "music_offtopic",
+    val defaultSkipVideoAdModes = mapOf(
+        "sponsor" to SkipVideoAdMode.AUTO_SKIP,
+        "selfpromo" to SkipVideoAdMode.MANUAL_SKIP,
+        "interaction" to SkipVideoAdMode.MANUAL_SKIP,
+        "intro" to SkipVideoAdMode.MANUAL_SKIP,
+        "outro" to SkipVideoAdMode.MANUAL_SKIP,
+        "preview" to SkipVideoAdMode.MANUAL_SKIP,
+        "music_offtopic" to SkipVideoAdMode.SHOW_IN_BAR,
+        "poi_highlight" to SkipVideoAdMode.MANUAL_SKIP,
+        "filler" to SkipVideoAdMode.SHOW_IN_BAR,
+        "exclusive_access" to SkipVideoAdMode.SHOW_IN_BAR,
     )
 
     val storyVideoAdTags = listOf(
@@ -83,14 +86,16 @@ object ModuleSettings {
     )
 
     val skipVideoAdCategories = listOf(
-        SponsorBlockCategory("sponsor", "赞助商广告", "视频中的植入、口播和商业推广。"),
-        SponsorBlockCategory("selfpromo", "自我推广", "UP 主引流、关注提醒、推广其他内容。"),
-        SponsorBlockCategory("intro", "片头", "与正文关系不大的固定开场。"),
-        SponsorBlockCategory("outro", "片尾", "结束卡、鸣谢和结尾引导。"),
-        SponsorBlockCategory("interaction", "互动提醒", "点赞、投币、评论等互动号召。"),
-        SponsorBlockCategory("preview", "预览 / 回顾", "下集预告、前情提要和重复回顾。"),
-        SponsorBlockCategory("filler", "填充内容", "与主线关系较弱的灌水片段。"),
-        SponsorBlockCategory("music_offtopic", "离题音乐", "与内容无关的纯音乐或演奏片段。"),
+        SponsorBlockCategory("sponsor", "赞助 / 恰饭", "付费推广、推荐和直接广告。", 0xFF00D400.toInt(), 0xFF007800.toInt()),
+        SponsorBlockCategory("selfpromo", "无偿 / 自我推广", "UP 主引流、关注提醒、推广其他内容。", 0xFFFFFF00.toInt(), 0xFFBFBF35.toInt()),
+        SponsorBlockCategory("interaction", "三连 / 互动提醒", "点赞、投币、评论等互动号召。", 0xFFCC00FF.toInt(), 0xFF6C0087.toInt()),
+        SponsorBlockCategory("intro", "片头", "与正文关系不大的固定开场。", 0xFF00FFFF.toInt(), 0xFF008080.toInt()),
+        SponsorBlockCategory("outro", "片尾", "结束卡、鸣谢和结尾引导。", 0xFF0202ED.toInt(), 0xFF000070.toInt()),
+        SponsorBlockCategory("preview", "预览 / 回顾", "下集预告、前情提要和重复回顾。", 0xFF008FD6.toInt(), 0xFF005799.toInt()),
+        SponsorBlockCategory("music_offtopic", "离题音乐", "与内容无关的纯音乐或演奏片段。", 0xFFFF9900.toInt(), 0xFFA6634A.toInt()),
+        SponsorBlockCategory("poi_highlight", "精彩片段 / 高光", "值得直接空降或重点标记的内容。", 0xFFFF1684.toInt(), 0xFF9B044C.toInt()),
+        SponsorBlockCategory("filler", "填充内容", "与主线关系较弱的灌水片段。", 0xFF7300FF.toInt(), 0xFF2E0066.toInt()),
+        SponsorBlockCategory("exclusive_access", "独家访问 / 抢先体验", "用于整段视频标签，例如仅限会员或抢先看的内容。", 0xFF008A5C.toInt(), 0xFF00543A.toInt()),
     )
 
     fun isSkipSplashAdEnabled(prefs: SharedPreferences): Boolean =
@@ -105,9 +110,29 @@ object ModuleSettings {
     fun isSkipVideoAdEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_VIDEO_AD_ENABLED, false)
 
+    fun getSkipVideoAdMode(prefs: SharedPreferences, category: String): SkipVideoAdMode =
+        if (prefs.contains("$KEY_SKIP_VIDEO_AD_MODE_PREFIX$category")) {
+                SkipVideoAdMode.fromValue(
+                    prefs.getInt(
+                        "$KEY_SKIP_VIDEO_AD_MODE_PREFIX$category",
+                        defaultSkipVideoAdModes[category]?.value ?: SkipVideoAdMode.IGNORE.value,
+                    ),
+                )
+        } else {
+            val legacyCategories = prefs.getStringSet(KEY_SKIP_VIDEO_AD_CATEGORIES, null)
+            if (legacyCategories != null) {
+                if (category in legacyCategories) SkipVideoAdMode.AUTO_SKIP else SkipVideoAdMode.IGNORE
+            } else {
+                defaultSkipVideoAdModes[category] ?: SkipVideoAdMode.IGNORE
+            }
+        }
+
     fun getSkipVideoAdCategories(prefs: SharedPreferences): Set<String> =
-        prefs.getStringSet(KEY_SKIP_VIDEO_AD_CATEGORIES, defaultSkipVideoAdCategories)
-            ?: defaultSkipVideoAdCategories
+        skipVideoAdCategories
+            .asSequence()
+            .filter { getSkipVideoAdMode(prefs, it.key) != SkipVideoAdMode.IGNORE }
+            .map { it.key }
+            .toSet()
 
     fun isSkipVideoAdSettingsVisible(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_VIDEO_AD_SETTINGS_VISIBLE, false)
@@ -198,6 +223,18 @@ object ModuleSettings {
         prefs.getBoolean(KEY_UNLOCK_COMMENT_GIF_ENABLED, false)
 }
 
+enum class SkipVideoAdMode(val value: Int, val label: String) {
+    AUTO_SKIP(0, "自动跳过"),
+    MANUAL_SKIP(1, "手动跳过"),
+    SHOW_IN_BAR(2, "显示标记"),
+    IGNORE(3, "不处理");
+
+    companion object {
+        fun fromValue(value: Int): SkipVideoAdMode =
+            entries.firstOrNull { it.value == value } ?: AUTO_SKIP
+    }
+}
+
 data class StoryVideoAdTag(
     val key: String,
     val label: String,
@@ -208,4 +245,6 @@ data class SponsorBlockCategory(
     val key: String,
     val label: String,
     val summary: String,
+    val color: Int,
+    val previewColor: Int,
 )

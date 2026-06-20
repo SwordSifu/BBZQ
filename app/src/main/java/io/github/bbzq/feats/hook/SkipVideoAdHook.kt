@@ -1,11 +1,17 @@
 ﻿package io.github.bbzq.feats.hook
 
+import android.app.Activity
+import android.app.AlertDialog
+import android.app.Application
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.widget.TextView
 import android.widget.Toast
 import dalvik.system.BaseDexClassLoader
 import dalvik.system.DexFile
 import io.github.bbzq.ModuleSettings
+import io.github.bbzq.SkipVideoAdMode
 import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.BilibiliSponsorBlock
 import io.github.bbzq.feats.RoamingEnv
@@ -20,6 +26,7 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     @Volatile private var lastSeekTime = 0L
@@ -29,6 +36,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     @Volatile private var loadingSegments = false
     @Volatile private var bvid = ""
     @Volatile private var cid = ""
+    private val manualNotifiedSegments = ConcurrentHashMap.newKeySet<String>()
 
     private var waitTime = CHECK_INTERVAL_MS
     private var playerRef: WeakReference<Any>? = null
@@ -37,11 +45,40 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun startHook() {
+        ensureActivityTracking()
         val count = hookPlayViewUnite() + hookPlayerCoreService()
         log("startHook: SkipVideoAd, methods=$count")
         if (isEnabled() && count == 0 && env.processName == env.packageName) {
             toast("\u8df3\u8fc7\u89c6\u9891\u5e7f\u544a\u672a\u627e\u5230\u64ad\u653e\u5668\u63a5\u53e3")
         }
+    }
+
+    private fun ensureActivityTracking() {
+        val application = env.hostContext as? Application ?: return
+        if (!callbacksRegistered.compareAndSet(false, true)) return
+        application.registerActivityLifecycleCallbacks(
+            object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+
+                override fun onActivityStarted(activity: Activity) = Unit
+
+                override fun onActivityResumed(activity: Activity) {
+                    topActivity = WeakReference(activity)
+                }
+
+                override fun onActivityPaused(activity: Activity) = Unit
+
+                override fun onActivityStopped(activity: Activity) = Unit
+
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+
+                override fun onActivityDestroyed(activity: Activity) {
+                    if (topActivity?.get() === activity) {
+                        topActivity = null
+                    }
+                }
+            },
+        )
     }
 
     private fun hookPlayViewUnite(): Int {
@@ -121,6 +158,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         SkipVideoAdState.segments = emptyList()
         segmentsKey = ""
         loadingSegments = false
+        manualNotifiedSegments.clear()
         waitTime = CHECK_INTERVAL_MS
         fetchSegmentsIfNeeded()
     }
@@ -203,6 +241,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                         SkipVideoAdState.durationMs = 0L
                         SkipVideoAdState.segments = emptyList()
                         segmentsKey = ""
+                        manualNotifiedSegments.clear()
                         fetchSegmentsIfNeeded()
                     }
                 }
@@ -322,10 +361,23 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (videoDuration > 0 && position > videoDuration) return false
 
         segments.forEach { segment ->
+            val mode = ModuleSettings.getSkipVideoAdMode(prefs, segment.category)
+            if (mode == SkipVideoAdMode.IGNORE) return@forEach
             val start = (segment.segment[0] * 1000).toLong()
             val end = (segment.segment[1] * 1000).toLong()
             if (position >= start - PRE_SKIP_THRESHOLD_MS && position < end) {
-                return seekPlayerTo(end, segment)
+                return when (mode) {
+                    SkipVideoAdMode.AUTO_SKIP -> seekPlayerTo(end, segment)
+                    SkipVideoAdMode.MANUAL_SKIP -> {
+                        val key = "${segmentStateKey(segment)}:manual"
+                        if (manualNotifiedSegments.add(key)) {
+                            showManualSkipDialog(end, segment)
+                        }
+                        false
+                    }
+                    SkipVideoAdMode.SHOW_IN_BAR,
+                    SkipVideoAdMode.IGNORE -> false
+                }
             }
         }
         return false
@@ -372,6 +424,45 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
     }
 
+    private fun showManualSkipDialog(position: Long, segment: BilibiliSponsorBlock.Segment) {
+        val activity = topActivity?.get()
+        if (activity == null || activity.isFinishing || activity.isDestroyed) {
+            toast(manualSkipToastMessage(segment))
+            return
+        }
+
+        activity.runOnUiThread {
+            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+
+            val themeId = activity.resources.getIdentifier("AppTheme.Dialog.Alert", "style", activity.packageName)
+            val builder = if (themeId != 0) {
+                AlertDialog.Builder(activity, themeId)
+            } else {
+                AlertDialog.Builder(activity)
+            }
+
+            val message = buildString {
+                append("检测到")
+                append(categoryLabel(segment))
+                append("片段，是否跳过？\n")
+                append(formatSeconds(segment.segment[0]))
+                append(" - ")
+                append(formatSeconds(segment.segment[1]))
+            }
+
+            val dialog = builder
+                .setTitle("空降助手")
+                .setMessage(message)
+                .setPositiveButton("跳过") { _, _ ->
+                    seekPlayerTo(position, segment)
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+
+            dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+        }
+    }
+
     private fun isEnabled(): Boolean =
         ModuleSettings.isSkipVideoAdEnabled(prefs)
 
@@ -408,11 +499,28 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun skipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
         "\u5df2\u8df3\u8fc7${categoryLabel(segment)}"
 
+    private fun manualSkipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
+        "\u5373\u5c06\u8df3\u8fc7${categoryLabel(segment)}"
+
     private fun categoryLabel(segment: BilibiliSponsorBlock.Segment): String =
         ModuleSettings.skipVideoAdCategories
             .firstOrNull { it.key == segment.category }
             ?.label
             ?: segment.category
+
+    private fun segmentStateKey(segment: BilibiliSponsorBlock.Segment): String {
+        val uuid = segment.uuid.trim()
+        if (uuid.isNotEmpty()) return uuid
+        return buildString {
+            append(segment.category)
+            append(':')
+            append(segment.segment[0])
+            append(':')
+            append(segment.segment[1])
+        }
+    }
+
+    private fun formatSeconds(value: Float): String = String.format(Locale.US, "%.1fs", value)
 
     private fun av2bv(aid: Long): String {
         val result = CharArray(12) { if (it < 3) "BV1"[it] else '0' }
@@ -442,6 +550,11 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             "tv.danmaku.biliplayerimpl.core.PlayerCoreService",
             "com.bilibili.playerbizcommon.service.PlayerCoreService",
         )
+
+        private val callbacksRegistered = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        @Volatile
+        private var topActivity: WeakReference<Activity>? = null
     }
 }
 

@@ -12,6 +12,7 @@ import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.CompoundButton
 import android.widget.LinearLayout
@@ -30,7 +31,7 @@ class SettingsContentFactory(
     private val tagCheckBoxes = mutableMapOf<String, CheckBox>()
     private val bottomBarItemCheckBoxes = mutableMapOf<String, CheckBox>()
     private val homeComponentCheckBoxes = mutableMapOf<String, CheckBox>()
-    private val sponsorBlockCategoryCheckBoxes = mutableMapOf<String, CheckBox>()
+    private val sponsorBlockCategoryButtons = mutableMapOf<String, Button>()
     private lateinit var disableLongPressCopySwitch: Switch
     private lateinit var enhanceLongPressCopySwitch: Switch
     private lateinit var downloadThreadSwitch: Switch
@@ -323,14 +324,14 @@ class SettingsContentFactory(
         val rows = mutableListOf<View>()
         rows += createInfoRow(
             "分类说明",
-            "仅会跳过你勾选的分类；如果主开关关闭，这里的分类会保留，但不会生效。",
+            "仅会生效你勾选的分类；如果主开关关闭，这里的分类会保留，但不会生效。"
         )
         rows += createInfoRow(
             "当前状态",
             if (ModuleSettings.isSkipVideoAdEnabled(prefs)) {
-                "空降助手已开启，可按下方分类过滤片段。"
+                "空降助手已开启，可按下方分类调整跳过方式。"
             } else {
-                "空降助手当前关闭。你可以先勾好分类，再回到上一页开启主开关。"
+                "空降助手当前关闭。你可以先设置分类模式，再回到上一页开启主开关。"
             },
         )
         rows += createSponsorBlockCategoryGroup()
@@ -602,17 +603,72 @@ class SettingsContentFactory(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(8))
             ModuleSettings.skipVideoAdCategories.forEach { category ->
-                addView(CheckBox(context).apply {
-                    text = "${category.label}\n${category.summary}"
-                    textSize = 14f
-                    setTextColor(TITLE_COLOR)
-                    setPadding(dp(6), dp(4), dp(6), dp(4))
-                    setOnCheckedChangeListener { _, _ ->
-                        if (!refreshing) saveSkipVideoAdCategories()
-                    }
-                    sponsorBlockCategoryCheckBoxes[category.key] = this
-                })
+                addView(createSkipModeRow(category))
             }
+        }
+    }
+
+    private fun createSkipModeRow(category: SponsorBlockCategory): View {
+        val button = Button(context).apply {
+            text = ModuleSettings.getSkipVideoAdMode(prefs, category.key).label
+            textSize = 12f
+            setOnClickListener { showSkipModeDialog(category) }
+            sponsorBlockCategoryButtons[category.key] = this
+        }
+
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            addView(
+                createTextColumn(category.label, category.summary),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(createCategoryColorLegend(category))
+            addView(button)
+        }
+    }
+
+    private fun showSkipModeDialog(category: SponsorBlockCategory) {
+        val currentMode = ModuleSettings.getSkipVideoAdMode(prefs, category.key)
+        val modes = SkipVideoAdMode.entries.toTypedArray()
+        val labels = modes.map { it.label }.toTypedArray()
+
+        AlertDialog.Builder(context)
+            .setTitle("${category.label} - 跳过")
+            .setSingleChoiceItems(labels, currentMode.ordinal) { dialog, which ->
+                val selectedMode = modes[which]
+                prefs.edit()
+                    .putInt(
+                        "${ModuleSettings.KEY_SKIP_VIDEO_AD_MODE_PREFIX}${category.key}",
+                        selectedMode.value,
+                    )
+                    .apply()
+                refresh()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun createCategoryColorLegend(category: SponsorBlockCategory): View {
+        fun swatch(color: Int): View =
+            View(context).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(4).toFloat()
+                    setColor(color)
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply {
+                    marginEnd = dp(6)
+                }
+            }
+
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, dp(10), 0)
+            addView(swatch(category.color))
+            addView(swatch(category.previewColor))
         }
     }
 
@@ -720,7 +776,6 @@ class SettingsContentFactory(
         val customHomeComponentHideEnabled = ModuleSettings.isCustomHomeComponentHideEnabled(prefs)
         val hiddenHomeComponents = ModuleSettings.getHiddenHomeComponents(prefs)
         val sponsorBlockEnabled = ModuleSettings.isSkipVideoAdEnabled(prefs)
-        val sponsorBlockCategories = ModuleSettings.getSkipVideoAdCategories(prefs)
 
         if (!copyBaseEnabled && prefs.getBoolean(ModuleSettings.KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, false)) {
             prefs.edit().putBoolean(ModuleSettings.KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, false).apply()
@@ -775,9 +830,13 @@ class SettingsContentFactory(
             checkBox.isEnabled = storyEnabled
             checkBox.isChecked = key in selectedTags
         }
-        sponsorBlockCategoryCheckBoxes.forEach { (key, checkBox) ->
-            checkBox.isEnabled = sponsorBlockEnabled
-            checkBox.isChecked = key in sponsorBlockCategories
+        sponsorBlockCategoryButtons.forEach { (key, button) ->
+            val category = ModuleSettings.skipVideoAdCategories.firstOrNull { it.key == key } ?: return@forEach
+            val mode = ModuleSettings.getSkipVideoAdMode(prefs, key)
+            button.isEnabled = sponsorBlockEnabled
+            button.text = mode.label
+            button.alpha = if (sponsorBlockEnabled) 1f else 0.45f
+            button.contentDescription = "${category.label}：${mode.label}"
         }
 
         if (::blockedCountView.isInitialized) {
@@ -805,12 +864,6 @@ class SettingsContentFactory(
             .apply()
     }
 
-    private fun saveSkipVideoAdCategories() {
-        prefs.edit()
-            .putStringSet(ModuleSettings.KEY_SKIP_VIDEO_AD_CATEGORIES, selectedSkipVideoAdCategories().toMutableSet())
-            .apply()
-    }
-
     private fun selectedTagKeys(): Set<String> =
         tagCheckBoxes.filterValues { it.isChecked }.keys.toSet()
 
@@ -819,9 +872,6 @@ class SettingsContentFactory(
 
     private fun hiddenHomeComponentClassNames(): Set<String> =
         homeComponentCheckBoxes.filterValues { !it.isChecked }.keys.toSet()
-
-    private fun selectedSkipVideoAdCategories(): Set<String> =
-        sponsorBlockCategoryCheckBoxes.filterValues { it.isChecked }.keys.toSet()
 
     private fun showRuntimeEnvironmentDialog() {
         val content = TextView(context).apply {
