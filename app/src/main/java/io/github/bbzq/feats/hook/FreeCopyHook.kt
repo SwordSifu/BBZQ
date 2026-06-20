@@ -94,9 +94,9 @@ class FreeCopyHook(env: RoamingEnv) : BaseRoamingHook(env) {
             }
 
             val dialog = builder
-                .setTitle("鑷敱澶嶅埗")
+                .setTitle("自由复制")
                 .setMessage(text)
-                .setPositiveButton("澶嶅埗鍘熷") { _, _ ->
+                .setPositiveButton("复制原始內容") { _, _ ->
                     val clipboard = activity.getSystemService(ClipboardManager::class.java)
                     runWithOriginalCopy {
                         clipboard.setPrimaryClip(clip)

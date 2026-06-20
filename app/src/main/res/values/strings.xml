@@ -1,13 +1,13 @@
 <resources>
     <string name="app_name">BBZQ</string>
     <string name="settings_title">BBZQ 设置</string>
-    <string name="xposed_description">基于 libxposed API 102 的 BBZQ 模块，提供分享净化、竖屏视频净化与常用体验增强。</string>
+    <string name="xposed_description">基于 libxposed API 102 的 BBZQ 模块，提供空降助手，功能增強与组件净化等常用功能。</string>
 
     <string name="intro_title">BBZQ</string>
     <string name="intro_module_title">模块信息</string>
     <string name="intro_module_body">当前版本：BBZQ %1$s</string>
     <string name="intro_desc_title">模块介绍</string>
-    <string name="intro_desc_body">这是一个面向哔哩哔哩客户端的轻量级 Xposed 模块，提供广告净化、体验修补和一些常用增强功能。</string>
+    <string name="intro_desc_body">这是一个面向哔哩哔哩客户端的轻量级 Xposed 模块，提供空降助手，功能增強与组件净化等常用功能。</string>
     <string name="intro_entry_title">如何进入设置</string>
     <string name="intro_entry_body">请打开哔哩哔哩，进入 设置 页面后找到 高级设置 即可进入 BBZQ 设置。</string>
     <string name="intro_launcher_title">桌面入口说明</string>
