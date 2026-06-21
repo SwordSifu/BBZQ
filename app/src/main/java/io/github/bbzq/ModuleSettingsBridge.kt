@@ -14,6 +14,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
     private var localCache: Map<String, Any> = emptyMap()
     private var lastLoadTime = 0L
     private var providerUnavailable = false
+    private var providerFailureTime = 0L
     private var hasAuthoritativeSnapshot = false
 
     private fun ensureLoaded() {
@@ -51,7 +52,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         }
 
     private fun getAllFromProvider(): Map<String, Any?> {
-        if (providerUnavailable) return emptyMap()
+        if (isProviderRetryBlocked()) return emptyMap()
         val result = call(ModuleSettingsProvider.METHOD_GET_ALL, null, null)
         val values = result?.keySet()?.associateWith { key -> result.get(key) }.orEmpty()
         return values
@@ -72,7 +73,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         ensureLoaded()
         return synchronized(cacheLock) { localCache[key] as? String } ?: run {
             if (hasAuthoritativeSnapshot) return defValue
-            if (providerUnavailable) return defValue
+            if (isProviderRetryBlocked()) return defValue
             val result = call(
                 ModuleSettingsProvider.METHOD_GET_STRING,
                 key,
@@ -92,7 +93,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         }
         if (cachedSet != null) return cachedSet
         if (hasAuthoritativeSnapshot) return defValues
-        if (providerUnavailable) return defValues
+        if (isProviderRetryBlocked()) return defValues
 
         val result = call(
             ModuleSettingsProvider.METHOD_GET_STRING_SET,
@@ -109,7 +110,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         ensureLoaded()
         return (synchronized(cacheLock) { localCache[key] } as? Number)?.toInt() ?: run {
             if (hasAuthoritativeSnapshot) return defValue
-            if (providerUnavailable) return defValue
+            if (isProviderRetryBlocked()) return defValue
             val result = call(
                 ModuleSettingsProvider.METHOD_GET_INT,
                 key,
@@ -141,7 +142,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         ensureLoaded()
         return (synchronized(cacheLock) { localCache[key] } as? Boolean) ?: run {
             if (hasAuthoritativeSnapshot) return defValue
-            if (providerUnavailable) return defValue
+            if (isProviderRetryBlocked()) return defValue
             val result = call(
                 ModuleSettingsProvider.METHOD_GET_BOOLEAN,
                 key,
@@ -155,7 +156,7 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         ensureLoaded()
         if (synchronized(cacheLock) { localCache.containsKey(key) }) return true
         if (hasAuthoritativeSnapshot) return false
-        if (providerUnavailable) return false
+        if (isProviderRetryBlocked()) return false
         val result = call(ModuleSettingsProvider.METHOD_CONTAINS, key, null)
         return result?.getBoolean(ModuleSettingsProvider.EXTRA_VALUE, false) ?: false
     }
@@ -175,14 +176,17 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         return try {
             resolver.call(ModuleSettingsProvider.CONTENT_URI, method, arg, extras).also {
                 providerUnavailable = false
+                providerFailureTime = 0L
                 lastProviderStatus = if (it == null) "$method returned null" else "$method ok"
             }
         } catch (e: IllegalArgumentException) {
             providerUnavailable = true
+            providerFailureTime = System.currentTimeMillis()
             lastProviderStatus = "$method IllegalArgumentException: ${e.message}"
             null
         } catch (e: SecurityException) {
             providerUnavailable = true
+            providerFailureTime = System.currentTimeMillis()
             lastProviderStatus = "$method SecurityException: ${e.message}"
             null
         }
@@ -346,10 +350,35 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
         fun attach(context: Context, xposed: XposedInterface? = null) {
             cachedContext = WeakReference(context.applicationContext ?: context)
             if (xposed != null) cachedXposed = xposed
+            instance.resetTransientState()
         }
 
-        val instance: SharedPreferences by lazy(LazyThreadSafetyMode.NONE) {
+        val instance: ModuleSettingsBridge by lazy(LazyThreadSafetyMode.NONE) {
             ModuleSettingsBridge()
+        }
+    }
+
+    private fun resetTransientState() {
+        synchronized(cacheLock) {
+            localCache = emptyMap()
+            lastLoadTime = 0L
+            providerUnavailable = false
+            providerFailureTime = 0L
+            hasAuthoritativeSnapshot = false
+        }
+        cachedRemotePrefs = WeakReference(null)
+    }
+
+    private fun isProviderRetryBlocked(): Boolean {
+        val now = System.currentTimeMillis()
+        synchronized(cacheLock) {
+            if (!providerUnavailable) return false
+            if (now - providerFailureTime >= CACHE_EXPIRATION) {
+                providerUnavailable = false
+                providerFailureTime = 0L
+                return false
+            }
+            return true
         }
     }
 

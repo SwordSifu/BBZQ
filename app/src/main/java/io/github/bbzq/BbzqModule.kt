@@ -10,10 +10,13 @@ import io.github.libxposed.api.XposedModuleInterface.HotReloadedParam
 import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import java.util.concurrent.atomic.AtomicBoolean
 
 class BbzqModule : XposedModule() {
     private var packageName: String = ""
     private var processName: String = ""
+    private val attachHookInstalled = AtomicBoolean(false)
+    private val runtimeStarted = AtomicBoolean(false)
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         processName = param.getProcessName()
@@ -26,7 +29,7 @@ class BbzqModule : XposedModule() {
 
     override fun onPackageLoaded(param: PackageLoadedParam) {
         val packageName = param.getPackageName()
-        if (packageName !in TARGET_PACKAGES || !param.isFirstPackage()) return
+        if (packageName !in TARGET_PACKAGES) return
         if (!RoamingRuntime.isProcessSupported(packageName, processName)) {
             log(
                 Log.INFO,
@@ -37,6 +40,11 @@ class BbzqModule : XposedModule() {
         }
         this.packageName = packageName
 
+        if (attachHookInstalled.compareAndSet(false, true).not()) {
+            maybeStartRuntime(packageName, processName, param.getDefaultClassLoader())
+            return
+        }
+
         val attach = Application::class.java.getDeclaredMethod("attach", Context::class.java)
         attach.isAccessible = true
         hook(attach)
@@ -44,13 +52,15 @@ class BbzqModule : XposedModule() {
             .intercept { chain ->
                 chain.proceed()
                 val application = chain.getThisObject() as? Application ?: return@intercept null
-                startRuntime(
+                startRuntimeOnce(
                     packageName = packageName,
                     processName = processName,
                     application = application,
-                    classLoader = param.getDefaultClassLoader(),
+                    classLoader = application.javaClass.classLoader ?: param.getDefaultClassLoader(),
                 )
             }
+
+        maybeStartRuntime(packageName, processName, param.getDefaultClassLoader())
     }
 
     override fun onHotReloading(param: HotReloadingParam): Boolean {
@@ -89,13 +99,28 @@ class BbzqModule : XposedModule() {
         }
 
         packageName = resolvedPackageName
-        startRuntime(
+        startRuntimeOnce(
             packageName = resolvedPackageName,
             processName = processName,
             application = application,
             classLoader = classLoader,
         )
         super.onHotReloaded(param)
+    }
+
+    private fun startRuntimeOnce(
+        packageName: String,
+        processName: String,
+        application: Context,
+        classLoader: ClassLoader,
+    ) {
+        if (runtimeStarted.compareAndSet(false, true).not()) return
+        startRuntime(
+            packageName = packageName,
+            processName = processName,
+            application = application,
+            classLoader = classLoader,
+        )
     }
 
     private fun startRuntime(
@@ -117,6 +142,21 @@ class BbzqModule : XposedModule() {
                 log(Log.WARN, LOG_TAG, message, throwable)
             }
         }
+    }
+
+    private fun maybeStartRuntime(
+        packageName: String,
+        processName: String,
+        classLoader: ClassLoader,
+    ) {
+        val application = resolveCurrentApplication() ?: return
+        val resolvedClassLoader = application.javaClass.classLoader ?: classLoader
+        startRuntimeOnce(
+            packageName = packageName,
+            processName = processName,
+            application = application,
+            classLoader = resolvedClassLoader,
+        )
     }
 
     private fun resolveCurrentApplication(): Application? {
