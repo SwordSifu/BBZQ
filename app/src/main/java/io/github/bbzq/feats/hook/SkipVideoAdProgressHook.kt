@@ -1,15 +1,19 @@
-﻿package io.github.bbzq.feats.hook
+package io.github.bbzq.feats.hook
 
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
+import dalvik.system.BaseDexClassLoader
+import dalvik.system.DexFile
 import io.github.bbzq.ModuleSettings
 import io.github.bbzq.SkipVideoAdMode
 import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.RoamingEnv
 import io.github.bbzq.feats.from
+import io.github.bbzq.feats.getObjectField
 import io.github.bbzq.feats.hookAfterMethod
+import java.util.Locale
 
 class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
     override fun startHook() {
@@ -36,12 +40,21 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun hookCustomProgressBars(): Int {
         var count = 0
-        CUSTOM_PROGRESS_CLASSES.forEach { name ->
+        findCustomProgressClasses().forEach { name ->
             val type = name.from(classLoader) ?: return@forEach
             count += hookCanvasMethod(type, "onDraw")
             count += hookCanvasMethod(type, "dispatchDraw")
         }
         return count
+    }
+
+    private fun findCustomProgressClasses(): Set<String> {
+        val classes = linkedSetOf<String>()
+        classes += CUSTOM_PROGRESS_CLASSES
+        dexClassNames()
+            .filter(::mightBeSeekWidgetName)
+            .forEach { classes += it }
+        return classes
     }
 
     private fun hookCanvasMethod(type: Class<*>, methodName: String): Int {
@@ -92,6 +105,26 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?.color
             ?: 0xFFFB7299.toInt()
 
+    private fun dexClassNames(): Sequence<String> = sequence {
+        val baseDexClassLoader = classLoader as? BaseDexClassLoader ?: return@sequence
+        val pathList = baseDexClassLoader.getObjectField("pathList") ?: return@sequence
+        val dexElements = pathList.getObjectField("dexElements") as? Array<*> ?: return@sequence
+        dexElements.forEach { element ->
+            val dexFile = element?.getObjectField("dexFile") as? DexFile ?: return@forEach
+            val entries = dexFile.entries()
+            while (entries.hasMoreElements()) {
+                yield(entries.nextElement())
+            }
+        }
+    }
+
+    private fun mightBeSeekWidgetName(name: String): Boolean {
+        val lowerName = name.lowercase(Locale.US)
+        if ("seek" !in lowerName && "progress" !in lowerName) return false
+        return ("player" in lowerName || "inline" in lowerName || "projection" in lowerName) &&
+            !name.contains('$')
+    }
+
     private companion object {
         private const val MIN_MARKER_WIDTH_PX = 3f
 
@@ -116,7 +149,10 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
             "tv.danmaku.bili.player.view.PlayerSeekBar",
             "tv.danmaku.bili.player.widget.VideoProgressBar",
             "tv.danmaku.bili.player.widget.PlayerSeekBar",
+            "com.bilibili.p4439app.p4450comm.p4472list.common.inline.widgetV3.InlineGestureSeekWidgetV3",
+            "com.bilibili.p5336lib.projection.internal.widget.halfscreen.ProjectionHalScreenSeekWidget",
+            "com.bilibili.p5336lib.projection.internal.widget.fullscreen.ProjectionFullScreenSeekWidget",
+            "com.bilibili.p5336lib.projection.internal.widget.fullscreen.newui.ProjectionSeekBarWidget",
         )
     }
 }
-

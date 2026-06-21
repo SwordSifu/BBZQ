@@ -1,4 +1,4 @@
-﻿package io.github.bbzq.feats.hook
+package io.github.bbzq.feats.hook
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -20,7 +20,8 @@ import io.github.bbzq.feats.callMethod
 import io.github.bbzq.feats.from
 import io.github.bbzq.feats.getObjectField
 import io.github.bbzq.feats.hookAfter
-import io.github.bbzq.feats.hookBeforeMethod
+import io.github.bbzq.feats.hookBefore
+import io.github.bbzq.feats.methodsNamed
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -49,7 +50,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         val count = hookPlayViewUnite() + hookPlayerCoreService()
         log("startHook: SkipVideoAd, methods=$count")
         if (isEnabled() && count == 0 && env.processName == env.packageName) {
-            toast("\u8df3\u8fc7\u89c6\u9891\u5e7f\u544a\u672a\u627e\u5230\u64ad\u653e\u5668\u63a5\u53e3")
+            toast("跳过视频广告未找到播放器接口")
         }
     }
 
@@ -82,36 +83,57 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private fun hookPlayViewUnite(): Int {
-        val playerMoss = PLAYER_MOSS.from(classLoader) ?: return 0
-        val playViewUniteReq = PLAY_VIEW_UNITE_REQ.from(classLoader) ?: return 0
-        val mossResponseHandler = MOSS_RESPONSE_HANDLER.from(classLoader)
-
-        var count = runCatching {
-            env.hookBeforeMethod(playerMoss, "executePlayViewUnite", playViewUniteReq) { param ->
-                updateVideoIdentityFromRequest(param.args.firstOrNull())
-            }
-        }.getOrElse {
-            log("SkipVideoAd failed to hook executePlayViewUnite", it)
-            0
-        }
-
-        if (mossResponseHandler != null) {
-            count += runCatching {
-                env.hookBeforeMethod(playerMoss, "playViewUnite", playViewUniteReq, mossResponseHandler) { param ->
-                    updateVideoIdentityFromRequest(param.args.firstOrNull())
-                    val handler = param.args.getOrNull(1) ?: return@hookBeforeMethod
-                    param.args[1] = wrapMossResponseHandler(handler, mossResponseHandler)
+        val types = linkedSetOf<Class<*>>()
+        PLAYER_MOSS_CANDIDATES.mapNotNullTo(types) { it.from(classLoader) }
+        dexClassNames()
+            .filter { "playerunite" in it.lowercase(Locale.US) }
+            .mapNotNull { name -> runCatching { Class.forName(name, false, classLoader) }.getOrNull() }
+            .filter { type ->
+                type.allMethods().any { method ->
+                    method.name in PLAY_VIEW_METHOD_NAMES && method.parameterCount >= 1
                 }
-            }.getOrElse {
-                log("SkipVideoAd failed to hook playViewUnite", it)
-                0
             }
-        }
+            .forEach { types += it }
 
+        var count = 0
+        types.forEach { type ->
+            type.allMethods()
+                .filter { method ->
+                    method.name in PLAY_VIEW_METHOD_NAMES &&
+                        method.parameterCount >= 1 &&
+                        method.parameterTypes.firstOrNull()?.isPlayViewRequestType() == true
+                }
+                .distinctBy(Method::toGenericString)
+                .forEach { method ->
+                    count += runCatching {
+                        env.hookBefore(method) { param ->
+                            updateVideoIdentityFromRequest(param.args.firstOrNull())
+                            if (method.name != "playViewUnite") return@hookBefore
+                            val handler = param.args.getOrNull(1) ?: return@hookBefore
+                            val wrapped = wrapResponseHandlerIfNeeded(handler)
+                            if (wrapped !== handler) {
+                                param.args[1] = wrapped
+                            }
+                        }
+                        1
+                    }.getOrElse {
+                        log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
+                        0
+                    }
+                }
+        }
         return count
     }
 
-    private fun wrapMossResponseHandler(handler: Any, handlerClass: Class<*>): Any {
+    private fun Class<*>.isPlayViewRequestType(): Boolean {
+        return methodsNamed("getBvid").any { it.parameterCount == 0 } &&
+            methodsNamed("getVod").any { it.parameterCount == 0 }
+    }
+
+    private fun wrapResponseHandlerIfNeeded(handler: Any): Any {
+        val handlerClass = handler.javaClass.interfaces.firstOrNull { type ->
+            type.methodsNamed("onNext").any { it.parameterCount == 1 }
+        } ?: return handler
         return Proxy.newProxyInstance(
             handler.javaClass.classLoader,
             arrayOf(handlerClass),
@@ -124,8 +146,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private fun updateVideoIdentityFromRequest(req: Any?) {
-        if (!isEnabled()) return
-        if (req == null) return
+        if (!isEnabled() || req == null) return
         var nextBvid = req.callMethod("getBvid") as? String ?: ""
         val vod = req.callMethod("getVod") ?: return
         if (nextBvid.isEmpty()) {
@@ -214,9 +235,9 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun hookPlayerState(type: Class<*>): Int {
         val methods = type.allMethods()
             .filter {
-                it.name == "G1" &&
-                    it.parameterCount == 1 &&
-                    it.parameterTypes[0] == Int::class.javaPrimitiveType
+                it.name == "getState" &&
+                    it.parameterCount == 0 &&
+                    it.returnType.isNumericType()
             }
             .distinctBy(Method::toGenericString)
             .toList()
@@ -228,7 +249,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     if (!isEnabled()) return@hookAfter
                     val service = param.thisObject ?: return@hookAfter
                     playerRef = WeakReference(service)
-                    val state = param.args.firstOrNull().asInt() ?: return@hookAfter
+                    val state = param.result.asInt() ?: return@hookAfter
                     if (state in 3..5 && duration <= 0) {
                         duration = service.callMethod("getDuration").asLong() ?: -1L
                         if (duration > 0) {
@@ -333,7 +354,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     BilibiliSponsorBlock.FetchStatus.SUCCESS -> {
                         log("SkipVideoAd loaded ${result.segments.size} segment(s) for $key")
                         if (result.segments.isNotEmpty()) {
-                            toast("\u5df2\u52a0\u8f7d ${result.segments.size} \u4e2a\u7a7a\u964d\u7247\u6bb5${loadedCategorySuffix(result.segments)}")
+                            toast("已加载 ${result.segments.size} 个空降片段${loadedCategorySuffix(result.segments)}")
                         }
                     }
                     BilibiliSponsorBlock.FetchStatus.EMPTY,
@@ -341,7 +362,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                         log("SkipVideoAd found no skippable segments for $key")
                     }
                     BilibiliSponsorBlock.FetchStatus.FAILED -> {
-                        toast("\u5e7f\u544a\u7247\u6bb5\u6570\u636e\u83b7\u53d6\u5931\u8d25")
+                        toast("广告片段数据获取失败")
                     }
                 }
             }
@@ -435,11 +456,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
 
             val themeId = activity.resources.getIdentifier("AppTheme.Dialog.Alert", "style", activity.packageName)
-            val builder = if (themeId != 0) {
-                AlertDialog.Builder(activity, themeId)
-            } else {
-                AlertDialog.Builder(activity)
-            }
+            val builder = if (themeId != 0) AlertDialog.Builder(activity, themeId) else AlertDialog.Builder(activity)
 
             val message = buildString {
                 append("检测到")
@@ -488,19 +505,17 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
     private fun loadedCategorySuffix(segments: List<BilibiliSponsorBlock.Segment>): String {
-        val labels = segments
-            .map(::categoryLabel)
-            .distinct()
+        val labels = segments.map(::categoryLabel).distinct()
         if (labels.isEmpty()) return ""
         val preview = labels.take(3).joinToString("、")
         return if (labels.size > 3) "（$preview 等）" else "（$preview）"
     }
 
     private fun skipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
-        "\u5df2\u8df3\u8fc7${categoryLabel(segment)}"
+        "已跳过${categoryLabel(segment)}"
 
     private fun manualSkipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
-        "\u5373\u5c06\u8df3\u8fc7${categoryLabel(segment)}"
+        "即将跳过${categoryLabel(segment)}"
 
     private fun categoryLabel(segment: BilibiliSponsorBlock.Segment): String =
         ModuleSettings.skipVideoAdCategories
@@ -536,19 +551,22 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private companion object {
-        private const val PLAYER_MOSS = "com.bapis.bilibili.app.playerunite.v1.PlayerMoss"
-        private const val PLAY_VIEW_UNITE_REQ = "com.bapis.bilibili.app.playerunite.v1.PlayViewUniteReq"
-        private const val MOSS_RESPONSE_HANDLER = "com.bilibili.lib.moss.api.MossResponseHandler"
         private const val PLAYER_CORE_SERVICE_INTERFACE = "tv.danmaku.biliplayerv2.service.IPlayerCoreService"
         private const val BV_TABLE = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf"
         private const val CHECK_INTERVAL_MS = 250L
         private const val PRE_SKIP_THRESHOLD_MS = 300L
         private const val SKIP_COOLDOWN_MS = 1000L
+        private val PLAY_VIEW_METHOD_NAMES = setOf("executePlayViewUnite", "playViewUnite")
 
         private val PLAYER_CORE_SERVICE_CANDIDATES = arrayOf(
             "tv.danmaku.biliplayerv2.service.PlayerCoreService",
             "tv.danmaku.biliplayerimpl.core.PlayerCoreService",
             "com.bilibili.playerbizcommon.service.PlayerCoreService",
+        )
+        private val PLAYER_MOSS_CANDIDATES = arrayOf(
+            "com.bapis.bilibili.app.playerunite.v1.PlayerMoss",
+            "com.bapis.bilibili.p4218app.playerunite.p4240v1.PlayerMoss",
+            "com.bapis.bilibili.p4218app.playerunite.p4240v1.KPlayerMoss",
         )
 
         private val callbacksRegistered = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -557,4 +575,3 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private var topActivity: WeakReference<Activity>? = null
     }
 }
-
