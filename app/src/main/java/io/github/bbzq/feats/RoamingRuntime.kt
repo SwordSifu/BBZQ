@@ -27,6 +27,9 @@ import io.github.bbzq.feats.hook.MineProfileHook
 import io.github.libxposed.api.XposedInterface
 
 object RoamingRuntime {
+    fun isProcessSupported(packageName: String, processName: String): Boolean =
+        resolveProcessScope(packageName, processName) != ProcessScope.UNSUPPORTED
+
     fun start(
         xposed: XposedInterface,
         packageName: String,
@@ -43,21 +46,27 @@ object RoamingRuntime {
             classLoader = classLoader,
             logger = log,
         )
+        val processScope = resolveProcessScope(packageName, processName)
 
         env.log("BBZQ runtime starting for $packageName/$processName")
+        if (processScope == ProcessScope.UNSUPPORTED) {
+            env.log("BBZQ runtime skipped for unsupported process $processName")
+            return
+        }
+
         ModuleSettingsBridge.attach(env.hostContext, xposed)
 
-        val hooks = when {
-            processName.endsWith(":web") -> listOf(
+        val hooks = when (processScope) {
+            ProcessScope.WEB -> listOf(
                 ::ShareHook,
                 ::RewardAdHook,
             )
 
-            processName.endsWith(":download") -> listOf(
+            ProcessScope.DOWNLOAD -> listOf(
                 ::DownloadThreadHook,
             )
 
-            else -> listOf(
+            ProcessScope.MAIN -> listOf(
                 ::SettingHook,
                 ::SplashAdHook,
                 ::ShareHook,
@@ -79,6 +88,7 @@ object RoamingRuntime {
                 ::VideoCommentHook,
                 ::MineProfileHook,
             )
+            ProcessScope.UNSUPPORTED -> emptyList()
         }
 
         hooks.forEach { factory ->
@@ -88,6 +98,23 @@ object RoamingRuntime {
         }
 
         env.log("BBZQ runtime installed ${hooks.size} hook(s)")
+    }
+
+    private fun resolveProcessScope(packageName: String, processName: String): ProcessScope {
+        val normalizedProcessName = processName.ifBlank { packageName }
+        return when {
+            normalizedProcessName == packageName -> ProcessScope.MAIN
+            normalizedProcessName.endsWith(":web") -> ProcessScope.WEB
+            normalizedProcessName.endsWith(":download") -> ProcessScope.DOWNLOAD
+            else -> ProcessScope.UNSUPPORTED
+        }
+    }
+
+    private enum class ProcessScope {
+        MAIN,
+        WEB,
+        DOWNLOAD,
+        UNSUPPORTED,
     }
 }
 

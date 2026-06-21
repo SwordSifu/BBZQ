@@ -27,6 +27,14 @@ class BbzqModule : XposedModule() {
     override fun onPackageLoaded(param: PackageLoadedParam) {
         val packageName = param.getPackageName()
         if (packageName !in TARGET_PACKAGES || !param.isFirstPackage()) return
+        if (!RoamingRuntime.isProcessSupported(packageName, processName)) {
+            log(
+                Log.INFO,
+                LOG_TAG,
+                "Skip unsupported process $processName for $packageName",
+            )
+            return
+        }
         this.packageName = packageName
 
         val attach = Application::class.java.getDeclaredMethod("attach", Context::class.java)
@@ -60,6 +68,15 @@ class BbzqModule : XposedModule() {
 
         if (resolvedPackageName !in TARGET_PACKAGES) {
             log(Log.WARN, LOG_TAG, "Skip hot reload outside target packages: $resolvedPackageName")
+            super.onHotReloaded(param)
+            return
+        }
+        if (!RoamingRuntime.isProcessSupported(resolvedPackageName, processName)) {
+            log(
+                Log.INFO,
+                LOG_TAG,
+                "Skip hot reload in unsupported process $processName for $resolvedPackageName",
+            )
             super.onHotReloaded(param)
             return
         }

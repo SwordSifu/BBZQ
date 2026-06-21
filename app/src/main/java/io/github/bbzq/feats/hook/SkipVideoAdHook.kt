@@ -46,6 +46,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun startHook() {
+        ModuleSettings.refreshSkipVideoAdCache(prefs)
         ensureActivityTracking()
         val count = hookPlayViewUnite() + hookPlayerCoreService()
         log("startHook: SkipVideoAd, methods=$count")
@@ -107,12 +108,16 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 .forEach { method ->
                     count += runCatching {
                         env.hookBefore(method) { param ->
-                            updateVideoIdentityFromRequest(param.args.firstOrNull())
-                            if (method.name != "playViewUnite") return@hookBefore
-                            val handler = param.args.getOrNull(1) ?: return@hookBefore
-                            val wrapped = wrapResponseHandlerIfNeeded(handler)
-                            if (wrapped !== handler) {
-                                param.args[1] = wrapped
+                            runCatching {
+                                updateVideoIdentityFromRequest(param.args.firstOrNull())
+                                if (method.name != "playViewUnite") return@runCatching
+                                val handler = param.args.getOrNull(1) ?: return@runCatching
+                                val wrapped = wrapResponseHandlerIfNeeded(handler)
+                                if (wrapped !== handler) {
+                                    param.args[1] = wrapped
+                                }
+                            }.onFailure {
+                                log("SkipVideoAd play view hook failed at ${method.declaringClass.name}.${method.name}", it)
                             }
                         }
                         1
@@ -135,13 +140,22 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             type.methodsNamed("onNext").any { it.parameterCount == 1 }
         } ?: return handler
         return Proxy.newProxyInstance(
-            handler.javaClass.classLoader,
-            arrayOf(handlerClass),
+            handler.javaClass.classLoader ?: classLoader,
+            collectProxyInterfaces(handler, handlerClass),
         ) { _, method, args ->
-            if (method.name == "onNext") {
-                updateVideoIdentityFromReply(args?.firstOrNull())
+            runCatching {
+                if (method.name == "onNext") {
+                    updateVideoIdentityFromReply(args?.firstOrNull())
+                }
+            }.onFailure {
+                log("SkipVideoAd response proxy failed at ${method.declaringClass.name}.${method.name}", it)
             }
-            if (args == null) method.invoke(handler) else method.invoke(handler, *args)
+
+            if (args == null) {
+                method.invoke(handler)
+            } else {
+                method.invoke(handler, *args)
+            }
         }
     }
 
@@ -207,21 +221,25 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         methods.forEach { method ->
             runCatching {
                 env.hookAfter(method) { param ->
-                    if (!isEnabled()) return@hookAfter
-                    val service = param.thisObject ?: return@hookAfter
-                    playerRef = WeakReference(service)
-                    if (duration <= 0) {
-                        duration = service.callMethod("getDuration").asLong() ?: -1L
-                        if (duration > 0) {
-                            SkipVideoAdState.durationMs = duration
+                    runCatching {
+                        if (!isEnabled()) return@runCatching
+                        val service = param.thisObject ?: return@runCatching
+                        playerRef = WeakReference(service)
+                        if (duration <= 0) {
+                            duration = service.callMethod("getDuration").asLong() ?: -1L
+                            if (duration > 0) {
+                                SkipVideoAdState.durationMs = duration
+                            }
                         }
-                    }
-                    fetchSegmentsIfNeeded()
-                    val position = param.result.asLong() ?: return@hookAfter
-                    val now = System.currentTimeMillis()
-                    if (now - lastSeekTime > waitTime) {
-                        lastSeekTime = now
-                        waitTime = if (seekTo(position)) SKIP_COOLDOWN_MS else CHECK_INTERVAL_MS
+                        fetchSegmentsIfNeeded()
+                        val position = param.result.asLong() ?: return@runCatching
+                        val now = System.currentTimeMillis()
+                        if (now - lastSeekTime > waitTime) {
+                            lastSeekTime = now
+                            waitTime = if (seekTo(position)) SKIP_COOLDOWN_MS else CHECK_INTERVAL_MS
+                        }
+                    }.onFailure {
+                        log("SkipVideoAd currentPosition callback failed at ${method.declaringClass.name}.${method.name}", it)
                     }
                 }
                 count++
@@ -246,24 +264,28 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         methods.forEach { method ->
             runCatching {
                 env.hookAfter(method) { param ->
-                    if (!isEnabled()) return@hookAfter
-                    val service = param.thisObject ?: return@hookAfter
-                    playerRef = WeakReference(service)
-                    val state = param.result.asInt() ?: return@hookAfter
-                    if (state in 3..5 && duration <= 0) {
-                        duration = service.callMethod("getDuration").asLong() ?: -1L
-                        if (duration > 0) {
-                            SkipVideoAdState.durationMs = duration
+                    runCatching {
+                        if (!isEnabled()) return@runCatching
+                        val service = param.thisObject ?: return@runCatching
+                        playerRef = WeakReference(service)
+                        val state = param.result.asInt() ?: return@runCatching
+                        if (state in 3..5 && duration <= 0) {
+                            duration = service.callMethod("getDuration").asLong() ?: -1L
+                            if (duration > 0) {
+                                SkipVideoAdState.durationMs = duration
+                            }
                         }
-                    }
-                    if (state == 2) {
-                        duration = -1L
-                        segments = emptyList()
-                        SkipVideoAdState.durationMs = 0L
-                        SkipVideoAdState.segments = emptyList()
-                        segmentsKey = ""
-                        manualNotifiedSegments.clear()
-                        fetchSegmentsIfNeeded()
+                        if (state == 2) {
+                            duration = -1L
+                            segments = emptyList()
+                            SkipVideoAdState.durationMs = 0L
+                            SkipVideoAdState.segments = emptyList()
+                            segmentsKey = ""
+                            manualNotifiedSegments.clear()
+                            fetchSegmentsIfNeeded()
+                        }
+                    }.onFailure {
+                        log("SkipVideoAd playerState callback failed at ${method.declaringClass.name}.${method.name}", it)
                     }
                 }
                 count++
@@ -325,7 +347,8 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
     private fun fetchSegmentsIfNeeded() {
-        if (!isEnabled()) return
+        val config = ModuleSettings.refreshSkipVideoAdCache(prefs)
+        if (!config.enabled) return
         val currentBvid = bvid
         val currentCid = cid
         if (currentBvid.isBlank() || currentCid.isBlank()) return
@@ -336,7 +359,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         loadingSegments = true
         segmentsKey = key
         Thread {
-            val enabledCategories = ModuleSettings.getSkipVideoAdCategories(prefs)
+            val enabledCategories = config.enabledCategories
             var result = BilibiliSponsorBlock.FetchResult(
                 status = BilibiliSponsorBlock.FetchStatus.FAILED,
                 segments = emptyList(),
@@ -377,12 +400,13 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun videoKey(): String = "$bvid/$cid"
 
     private fun seekTo(position: Long): Boolean {
-        if (!isEnabled()) return false
+        val config = ModuleSettings.getSkipVideoAdCache(prefs)
+        if (!config.enabled) return false
         val videoDuration = duration
         if (videoDuration > 0 && position > videoDuration) return false
 
         segments.forEach { segment ->
-            val mode = ModuleSettings.getSkipVideoAdMode(prefs, segment.category)
+            val mode = config.modes[segment.category] ?: SkipVideoAdMode.IGNORE
             if (mode == SkipVideoAdMode.IGNORE) return@forEach
             val start = (segment.segment[0] * 1000).toLong()
             val end = (segment.segment[1] * 1000).toLong()
@@ -481,7 +505,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private fun isEnabled(): Boolean =
-        ModuleSettings.isSkipVideoAdEnabled(prefs)
+        ModuleSettings.isSkipVideoAdEnabledCached(prefs)
 
     private fun Any?.asInt(): Int? = when (this) {
         is Number -> toInt()
@@ -503,6 +527,13 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             Short::class.javaObjectType -> toInt()
             else -> this
         }
+
+    private fun collectProxyInterfaces(original: Any, primaryType: Class<*>): Array<Class<*>> =
+        buildSet {
+            add(primaryType)
+            original.javaClass.interfaces.forEach(::add)
+            original.javaClass.takeIf { it.isInterface }?.let(::add)
+        }.toTypedArray()
 
     private fun loadedCategorySuffix(segments: List<BilibiliSponsorBlock.Segment>): String {
         val labels = segments.map(::categoryLabel).distinct()

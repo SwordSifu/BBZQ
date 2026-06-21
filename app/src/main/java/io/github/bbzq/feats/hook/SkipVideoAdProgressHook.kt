@@ -18,7 +18,8 @@ import java.util.Locale
 class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
     override fun startHook() {
         if (env.processName != env.packageName) return
-        if (!ModuleSettings.isSkipVideoAdEnabled(prefs)) return
+        ModuleSettings.refreshSkipVideoAdCache(prefs)
+        if (!ModuleSettings.isSkipVideoAdEnabledCached(prefs)) return
 
         var count = 0
         count += hookSystemProgressBar()
@@ -30,7 +31,11 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         val progressBar = "android.widget.ProgressBar".from(classLoader) ?: return 0
         return runCatching {
             env.hookAfterMethod(progressBar, "onDraw", Canvas::class.java) { param ->
-                drawSegments(param.thisObject as? View, param.args.firstOrNull() as? Canvas)
+                runCatching {
+                    drawSegments(param.thisObject as? View, param.args.firstOrNull() as? Canvas)
+                }.onFailure {
+                    log("SkipVideoAdProgress draw hook failed at ProgressBar.onDraw", it)
+                }
             }
         }.getOrElse {
             log("SkipVideoAdProgress failed to hook ProgressBar.onDraw", it)
@@ -60,14 +65,19 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun hookCanvasMethod(type: Class<*>, methodName: String): Int {
         return runCatching {
             env.hookAfterMethod(type, methodName, Canvas::class.java) { param ->
-                drawSegments(param.thisObject as? View, param.args.firstOrNull() as? Canvas)
+                runCatching {
+                    drawSegments(param.thisObject as? View, param.args.firstOrNull() as? Canvas)
+                }.onFailure {
+                    log("SkipVideoAdProgress draw hook failed at ${type.name}.$methodName", it)
+                }
             }
         }.getOrElse { 0 }
     }
 
     private fun drawSegments(view: View?, canvas: Canvas?) {
         if (view == null || canvas == null) return
-        if (!ModuleSettings.isSkipVideoAdEnabled(prefs)) return
+        val config = ModuleSettings.getSkipVideoAdCache(prefs)
+        if (!config.enabled) return
 
         val segments = SkipVideoAdState.segments
         val durationMs = SkipVideoAdState.durationMs
@@ -83,19 +93,19 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         val radius = (bottom - top) / 2f
 
         segments.forEach { segment ->
-            if (ModuleSettings.getSkipVideoAdMode(prefs, segment.category) == SkipVideoAdMode.IGNORE) {
+            if ((config.modes[segment.category] ?: SkipVideoAdMode.IGNORE) == SkipVideoAdMode.IGNORE) {
                 return@forEach
             }
             val startX = view.paddingLeft + ((segment.segment[0] * 1000f) / durationMs) * availableWidth
             val endX = view.paddingLeft + ((segment.segment[1] * 1000f) / durationMs) * availableWidth
             val safeStart = startX.coerceIn(view.paddingLeft.toFloat(), (width - view.paddingRight).toFloat())
             val safeEnd = endX.coerceIn(safeStart + MIN_MARKER_WIDTH_PX, (width - view.paddingRight).toFloat())
-            val rect = RectF(safeStart, top, safeEnd, bottom)
+            sharedRect.set(safeStart, top, safeEnd, bottom)
 
             fillPaint.color = colorFor(segment.category)
             strokePaint.color = fillPaint.color
-            canvas.drawRoundRect(rect, radius, radius, fillPaint)
-            canvas.drawRoundRect(rect, radius, radius, strokePaint)
+            canvas.drawRoundRect(sharedRect, radius, radius, fillPaint)
+            canvas.drawRoundRect(sharedRect, radius, radius, strokePaint)
         }
     }
 
@@ -127,6 +137,7 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private companion object {
         private const val MIN_MARKER_WIDTH_PX = 3f
+        private val sharedRect = RectF()
 
         private val fillPaint = Paint().apply {
             isAntiAlias = true

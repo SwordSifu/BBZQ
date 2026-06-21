@@ -8,6 +8,10 @@ import io.github.bbzq.feats.getObjectField
 import io.github.bbzq.feats.hookAfter
 import io.github.bbzq.feats.hookBefore
 import io.github.bbzq.feats.methodsNamed
+import java.lang.reflect.Method
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.concurrent.ConcurrentHashMap
 
 class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
     override fun startHook() {
@@ -30,13 +34,17 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
         constructors.forEach { ctor ->
             ctor.isAccessible = true
             env.hookBefore(ctor) { param ->
-                if (!ModuleSettings.isCommentDisableEnabled(prefs)) return@hookBefore
-                val listIndex = param.args.indexOfFirst { it is List<*> }
-                if (listIndex < 0) return@hookBefore
-                val items = param.args[listIndex] as? List<*> ?: return@hookBefore
-                param.args[listIndex] = items.filterNot { item ->
-                    val name = item?.javaClass?.name.orEmpty()
-                    name.contains("CommentTabPageProvider") || name.contains("CommentTab")
+                runCatching {
+                    if (!ModuleSettings.isCommentDisableEnabled(prefs)) return@runCatching
+                    val listIndex = param.args.indexOfFirst { it is List<*> }
+                    if (listIndex < 0) return@runCatching
+                    val items = param.args[listIndex] as? List<*> ?: return@runCatching
+                    param.args[listIndex] = items.filterNot { item ->
+                        val name = item?.javaClass?.name.orEmpty()
+                        name.contains("CommentTabPageProvider") || name.contains("CommentTab")
+                    }
+                }.onFailure {
+                    log("VideoComment disable comment hook failed", it)
                 }
             }
         }
@@ -45,23 +53,26 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun hookQuickReply(): Int {
         val viewModelClass = COMMENT_VIEW_MODEL_CLASSES.firstNotNullOfOrNull { it.from(classLoader) } ?: return 0
-        val candidates = viewModelClass.methodsNamed(null).filter { method ->
-            method.returnType == Void.TYPE &&
-                method.parameterCount == 1 &&
-                !method.name.contains("lambda", ignoreCase = true)
-        }.toList()
+        val candidates = viewModelClass.methodsNamed(null)
+            .filter { method ->
+                method.returnType == Void.TYPE &&
+                    method.parameterCount == 1 &&
+                    !method.name.contains("lambda", ignoreCase = true) &&
+                    method.name in QUICK_REPLY_METHOD_NAMES &&
+                    method.parameterTypes.firstOrNull()?.isCommentActionType() == true
+            }
+            .distinctBy(Method::toGenericString)
+            .toList()
 
         candidates.forEach { method ->
             env.hookBefore(method) { param ->
-                if (!ModuleSettings.isCommentNoQuickReplyEnabled(prefs)) return@hookBefore
-                val action = param.args.firstOrNull()?.toString() ?: return@hookBefore
-                if (!action.startsWith("ShowPublishDialog")) return@hookBefore
-
-                val allowed = QUICK_REPLY_ALLOW_STACK.any { marker ->
-                    Throwable().stackTrace.any { stack -> "${stack.className}.${stack.methodName}".contains(marker) }
-                }
-                if (!allowed) {
+                runCatching {
+                    if (!ModuleSettings.isCommentNoQuickReplyEnabled(prefs)) return@runCatching
+                    val action = param.args.firstOrNull() ?: return@runCatching
+                    if (!action.isPublishDialogAction()) return@runCatching
                     param.result = null
+                }.onFailure {
+                    log("VideoComment quick reply hook failed at ${method.declaringClass.name}.${method.name}", it)
                 }
             }
         }
@@ -77,8 +88,12 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 .filter { it.returnType == Void.TYPE && it.parameterCount >= 1 }
                 .forEach { method ->
                     env.hookBefore(method) { param ->
-                        if (ModuleSettings.isCommentNoVoteEnabled(prefs)) {
-                            param.result = null
+                        runCatching {
+                            if (ModuleSettings.isCommentNoVoteEnabled(prefs)) {
+                                param.result = null
+                            }
+                        }.onFailure {
+                            log("VideoComment vote hook failed at ${method.declaringClass.name}.${method.name}", it)
                         }
                     }
                     count += 1
@@ -96,8 +111,12 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 .filter { it.returnType == Void.TYPE && it.parameterCount >= 1 }
                 .forEach { method ->
                     env.hookBefore(method) { param ->
-                        if (ModuleSettings.isCommentNoFollowEnabled(prefs)) {
-                            param.result = null
+                        runCatching {
+                            if (ModuleSettings.isCommentNoFollowEnabled(prefs)) {
+                                param.result = null
+                            }
+                        }.onFailure {
+                            log("VideoComment follow widget hook failed at ${method.declaringClass.name}.${method.name}", it)
                         }
                     }
                     count += 1
@@ -110,17 +129,21 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 .filter { it.parameterCount >= 1 && List::class.java.isAssignableFrom(it.parameterTypes[0]) }
                 .forEach { method ->
                     env.hookBefore(method) { param ->
-                        if (!ModuleSettings.isCommentNoFollowEnabled(prefs)) return@hookBefore
-                        @Suppress("UNCHECKED_CAST")
-                        val items = param.args[0] as? List<Any?> ?: return@hookBefore
-                        items.forEach { item ->
-                            item?.javaClass?.declaredFields?.forEach { field ->
-                                field.isAccessible = true
-                                val value = runCatching { field.get(item) }.getOrNull() ?: return@forEach
-                                if (value.toString().startsWith("Follow(")) {
-                                    runCatching { field.set(item, null) }
+                        runCatching {
+                            if (!ModuleSettings.isCommentNoFollowEnabled(prefs)) return@runCatching
+                            @Suppress("UNCHECKED_CAST")
+                            val items = param.args[0] as? List<Any?> ?: return@runCatching
+                            items.forEach { item ->
+                                item?.javaClass?.declaredFields?.forEach { field ->
+                                    field.isAccessible = true
+                                    val value = runCatching { field.get(item) }.getOrNull() ?: return@forEach
+                                    if (value.javaClass.simpleName.contains("Follow", ignoreCase = true)) {
+                                        runCatching { field.set(item, null) }
+                                    }
                                 }
                             }
+                        }.onFailure {
+                            log("VideoComment decorative follow hook failed at ${method.declaringClass.name}.${method.name}", it)
                         }
                     }
                     count += 1
@@ -135,14 +158,20 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
         val method = contentClass.methodsNamed("internalGetUrls").firstOrNull { it.parameterCount == 0 } ?: return 0
 
         env.hookAfter(method) { param ->
-            if (!ModuleSettings.isCommentNoSearchEnabled(prefs)) return@hookAfter
-            val urls = param.result as? MutableMap<*, *> ?: return@hookAfter
-            urls.entries.removeIf { (_, value) ->
-                value != null && value.javaClass.declaredFields.any { field ->
-                    field.isAccessible = true
-                    runCatching { field.get(value)?.toString()?.startsWith("bilibili://search") == true }
-                        .getOrDefault(false)
+            runCatching {
+                if (!ModuleSettings.isCommentNoSearchEnabled(prefs)) return@runCatching
+                val urls = param.result as? MutableMap<*, *> ?: return@runCatching
+                urls.entries.removeIf { (_, value) ->
+                    value != null && value.javaClass.declaredFields.any { field ->
+                        field.isAccessible = true
+                        runCatching {
+                            (field.get(value) as? CharSequence)
+                                ?.startsWith("bilibili://search") == true
+                        }.getOrDefault(false)
+                    }
                 }
+            }.onFailure {
+                log("VideoComment search url hook failed", it)
             }
         }
         return 1
@@ -153,7 +182,8 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
         COMMENT_SUBJECT_CONTROL_CLASSES.forEach { className ->
             val type = className.from(classLoader) ?: return@forEach
-            val defaultInstance = type.classLoader
+            val hostClassLoader = type.classLoader ?: return@forEach
+            val defaultInstance = hostClassLoader
                 .loadClass(type.name.replace("SubjectControl", "EmptyPage"))
                 .declaredFields
                 .firstOrNull { it.name == "DEFAULT_INSTANCE" }
@@ -162,8 +192,12 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
             val method = type.methodsNamed("getEmptyPage").firstOrNull { it.parameterCount == 0 } ?: return@forEach
             if (defaultInstance != null) {
                 env.hookAfter(method) { param ->
-                    if (ModuleSettings.isCommentNoEmptyPageEnabled(prefs)) {
-                        param.result = defaultInstance
+                    runCatching {
+                        if (ModuleSettings.isCommentNoEmptyPageEnabled(prefs)) {
+                            param.result = defaultInstance
+                        }
+                    }.onFailure {
+                        log("VideoComment empty page hook failed at ${method.declaringClass.name}.${method.name}", it)
                     }
                 }
                 count += 1
@@ -173,8 +207,9 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
         COMMENT_SUBJECT_DESC_CLASSES.forEach { className ->
             val type = className.from(classLoader) ?: return@forEach
             val emptyPageClassName = type.name.replace("SubjectDescriptionReply", "EmptyPage")
+            val hostClassLoader = type.classLoader ?: return@forEach
             val defaultInstance = runCatching {
-                type.classLoader.loadClass(emptyPageClassName)
+                hostClassLoader.loadClass(emptyPageClassName)
                     .declaredFields
                     .firstOrNull { it.name == "DEFAULT_INSTANCE" }
                     ?.apply { isAccessible = true }
@@ -183,8 +218,12 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
             val method = type.methodsNamed("getEmptyPage").firstOrNull { it.parameterCount == 0 } ?: return@forEach
             if (defaultInstance != null) {
                 env.hookAfter(method) { param ->
-                    if (ModuleSettings.isCommentNoEmptyPageEnabled(prefs)) {
-                        param.result = defaultInstance
+                    runCatching {
+                        if (ModuleSettings.isCommentNoEmptyPageEnabled(prefs)) {
+                            param.result = defaultInstance
+                        }
+                    }.onFailure {
+                        log("VideoComment subject desc empty page hook failed at ${method.declaringClass.name}.${method.name}", it)
                     }
                 }
                 count += 1
@@ -200,21 +239,76 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
             val type = className.from(classLoader) ?: return@forEach
             val onNext = type.methodsNamed("onNext").firstOrNull { it.parameterCount == 1 } ?: return@forEach
             env.hookBefore(onNext) { param ->
-                val reply = param.args.firstOrNull() ?: return@hookBefore
-                if (ModuleSettings.isCommentNoQoeEnabled(prefs)) {
-                    reply.javaClass.methodsNamed(null)
-                        .firstOrNull { it.name.contains("clearQoe", ignoreCase = true) && it.parameterCount == 0 }
-                        ?.let { runCatching { it.invoke(reply) } }
-                }
-                if (ModuleSettings.isCommentNoOperationEnabled(prefs)) {
-                    reply.javaClass.methodsNamed(null)
-                        .filter { it.name.contains("clearOperation", ignoreCase = true) && it.parameterCount == 0 }
-                        .forEach { runCatching { it.invoke(reply) } }
+                runCatching {
+                    val reply = param.args.firstOrNull() ?: return@runCatching
+                    val removeQoe = ModuleSettings.isCommentNoQoeEnabled(prefs)
+                    val removeOperation = ModuleSettings.isCommentNoOperationEnabled(prefs)
+                    if (!removeQoe && !removeOperation) return@runCatching
+                    cleanupReplyPayload(reply, removeQoe, removeOperation)
+                }.onFailure {
+                    log("VideoComment main list cleanup failed at ${onNext.declaringClass.name}.${onNext.name}", it)
                 }
             }
             count += 1
         }
         return count
+    }
+
+    private fun cleanupReplyPayload(reply: Any, removeQoe: Boolean, removeOperation: Boolean) {
+        val visited = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
+        val pending = ArrayDeque<Any>()
+        pending += reply
+
+        while (pending.isNotEmpty()) {
+            val current = pending.removeFirst()
+            if (!visited.add(current)) continue
+
+            val methods = replyCleanupMethods.getOrPut(current.javaClass) {
+                resolveReplyCleanupMethods(current.javaClass)
+            }
+            if (removeQoe) {
+                methods.clearQoe?.let { runCatching { it.invoke(current) } }
+            }
+            if (removeOperation) {
+                methods.clearOperations.forEach { method ->
+                    runCatching { method.invoke(current) }
+                }
+            }
+
+            val children = methods.getRepliesList
+                ?.let { runCatching { it.invoke(current) as? List<*> }.getOrNull() }
+                .orEmpty()
+            children.filterNotNullTo(pending)
+        }
+    }
+
+    private fun resolveReplyCleanupMethods(type: Class<*>): ReplyCleanupMethods =
+        ReplyCleanupMethods(
+            clearQoe = type.methodsNamed(null)
+                .firstOrNull { it.name == "clearQoe" && it.parameterCount == 0 },
+            clearOperations = type.methodsNamed(null)
+                .filter { it.name in CLEAR_OPERATION_METHOD_NAMES && it.parameterCount == 0 }
+                .distinctBy(Method::toGenericString)
+                .toList(),
+            getRepliesList = type.methodsNamed("getRepliesList")
+                .firstOrNull { it.parameterCount == 0 && List::class.java.isAssignableFrom(it.returnType) },
+        )
+
+    private fun Class<*>.isCommentActionType(): Boolean {
+        val simpleName = simpleName
+        val className = name
+        return className.contains(".comment3.", ignoreCase = true) &&
+            (simpleName.contains("Action", ignoreCase = true) ||
+                simpleName.contains("Intent", ignoreCase = true))
+    }
+
+    private fun Any.isPublishDialogAction(): Boolean {
+        val simpleName = javaClass.simpleName
+        val className = javaClass.name
+        return simpleName.contains("ShowPublishDialog", ignoreCase = true) ||
+            simpleName.contains("PublishDialog", ignoreCase = true) ||
+            className.contains("ShowPublishDialog", ignoreCase = true) ||
+            className.contains("PublishDialogIntent", ignoreCase = true)
     }
 
     private companion object {
@@ -275,13 +369,14 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
             "com.bapis.bilibili.p4311main.community.reply.p4312v1.KReplyMoss\$mainList\$\$inlined\$suspendCall\$2",
         )
 
-        private val QUICK_REPLY_ALLOW_STACK = arrayOf(
-            "CommentViewModel\$dispatchAction\$1",
-            "CommentActionBar",
-            "CommentMainLayer",
-            "CommentDetailLayer",
-            "CommentContentHolder",
-            "CommentMoreMenu",
-        )
+        private val QUICK_REPLY_METHOD_NAMES = setOf("dispatchAction", "onAction", "submitAction")
+        private val CLEAR_OPERATION_METHOD_NAMES = setOf("clearOperation", "clearOperationV2")
+        private val replyCleanupMethods = ConcurrentHashMap<Class<*>, ReplyCleanupMethods>()
     }
 }
+
+private data class ReplyCleanupMethods(
+    val clearQoe: Method?,
+    val clearOperations: List<Method>,
+    val getRepliesList: Method?,
+)

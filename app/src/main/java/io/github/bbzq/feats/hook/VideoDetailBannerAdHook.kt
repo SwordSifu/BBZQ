@@ -69,15 +69,19 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
         env.hookAfter(getVideoDetail) { param ->
-            val original = param.result ?: return@hookAfter
-            if (!videoDetailType.isInstance(original)) return@hookAfter
-            param.result = videoDetailProxy(
-                original = original,
-                videoDetailType = videoDetailType,
-                underPlayerType = underPlayerType,
-                relateType = relateType,
-                merchandiseType = merchandiseType,
-            )
+            runCatching {
+                val original = param.result ?: return@runCatching
+                if (!videoDetailType.isInstance(original)) return@runCatching
+                param.result = videoDetailProxy(
+                    original = original,
+                    videoDetailType = videoDetailType,
+                    underPlayerType = underPlayerType,
+                    relateType = relateType,
+                    merchandiseType = merchandiseType,
+                )
+            }.onFailure {
+                log("VideoDetailBannerAd hook failed at ${getVideoDetail.declaringClass.name}.${getVideoDetail.name}", it)
+            }
         }
         log(
             "startHook: VideoDetailBannerAd at ${getVideoDetail.declaringClass.name}.${getVideoDetail.name}, " +
@@ -128,15 +132,23 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
         env.hookBefore(createViewEntry) { param ->
-            if (!isRelateGameComponent(param.thisObject)) return@hookBefore
-            val context = param.args.getOrNull(0) as? Context ?: return@hookBefore
-            val emptyEntry = createEmptyViewEntry(simpleViewEntryConstructor, context) ?: return@hookBefore
-            logBlocked("getRelateGameView")
-            param.result = emptyEntry
+            runCatching {
+                if (!isRelateGameComponent(param.thisObject)) return@runCatching
+                val context = param.args.getOrNull(0) as? Context ?: return@runCatching
+                val emptyEntry = createEmptyViewEntry(simpleViewEntryConstructor, context) ?: return@runCatching
+                logBlocked("getRelateGameView")
+                param.result = emptyEntry
+            }.onFailure {
+                log("VideoDetailBannerAd relate createViewEntry failed", it)
+            }
         }
         env.hookBefore(bindToView) { param ->
-            if (!isRelateGameComponent(param.thisObject)) return@hookBefore
-            param.result = unit
+            runCatching {
+                if (!isRelateGameComponent(param.thisObject)) return@runCatching
+                param.result = unit
+            }.onFailure {
+                log("VideoDetailBannerAd relate bindToView failed", it)
+            }
         }
         log("startHook: VideoDetailBannerAd relate game at ${baseComponent.name}.createViewEntry/bindToView")
         return 2
@@ -151,34 +163,41 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     ): Any = synchronized(videoDetailProxies) {
         videoDetailProxies.getOrPut(original) {
             Proxy.newProxyInstance(
-                classLoader,
-                arrayOf(videoDetailType),
+                original.javaClass.classLoader ?: classLoader,
+                collectProxyInterfaces(original, videoDetailType),
                 InvocationHandler { proxy, method, args ->
-                    when {
-                        method.isObjectMethod("toString", 0) ->
-                            "BBZQVideoDetailProxy(${original.javaClass.name})"
-                        method.isObjectMethod("hashCode", 0) ->
-                            System.identityHashCode(proxy)
-                        method.isObjectMethod("equals", 1) ->
-                            proxy === args?.firstOrNull()
-                        method.name == "getUnderPlayer" && method.parameterCount == 0 -> {
-                            val underPlayer = invokeOriginal(original, method, args) ?: return@InvocationHandler null
-                            underPlayerProxy(underPlayer, underPlayerType)
-                        }
-                        method.name == "getRelate" && method.parameterCount == 0 && relateType != null -> {
-                            val relate = invokeOriginal(original, method, args) ?: return@InvocationHandler null
-                            if (relateType.isInstance(relate)) relateProxy(relate, relateType) else relate
-                        }
-                        method.name == "getMerchandise" && method.parameterCount == 0 && merchandiseType != null -> {
-                            val merchandise = invokeOriginal(original, method, args) ?: return@InvocationHandler null
-                            if (merchandiseType.isInstance(merchandise)) {
-                                merchandiseProxy(merchandise, merchandiseType)
-                            } else {
-                                merchandise
+                    runCatching {
+                        when {
+                            method.isObjectMethod("toString", 0) ->
+                                "BBZQVideoDetailProxy(${original.javaClass.name})"
+                            method.isObjectMethod("hashCode", 0) ->
+                                System.identityHashCode(proxy)
+                            method.isObjectMethod("equals", 1) ->
+                                proxy === args?.firstOrNull()
+                            method.name == "getUnderPlayer" && method.parameterCount == 0 -> {
+                                val underPlayer = invokeOriginal(original, method, args) ?: return@runCatching null
+                                underPlayerProxy(underPlayer, underPlayerType)
                             }
+                            method.name == "getRelate" && method.parameterCount == 0 && relateType != null -> {
+                                val relate = invokeOriginal(original, method, args) ?: return@runCatching null
+                                if (relateType.isInstance(relate)) relateProxy(relate, relateType) else relate
+                            }
+                            method.name == "getMerchandise" &&
+                                method.parameterCount == 0 &&
+                                merchandiseType != null -> {
+                                val merchandise = invokeOriginal(original, method, args) ?: return@runCatching null
+                                if (merchandiseType.isInstance(merchandise)) {
+                                    merchandiseProxy(merchandise, merchandiseType)
+                                } else {
+                                    merchandise
+                                }
+                            }
+                            else ->
+                                invokeOriginal(original, method, args)
                         }
-                        else ->
-                            invokeOriginal(original, method, args)
+                    }.getOrElse {
+                        log("VideoDetailBannerAd videoDetail proxy failed at ${method.declaringClass.name}.${method.name}", it)
+                        invokeOriginal(original, method, args)
                     }
                 },
             )
@@ -189,22 +208,27 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         synchronized(underPlayerProxies) {
             underPlayerProxies.getOrPut(original) {
                 Proxy.newProxyInstance(
-                    classLoader,
-                    arrayOf(underPlayerType),
+                    original.javaClass.classLoader ?: classLoader,
+                    collectProxyInterfaces(original, underPlayerType),
                     InvocationHandler { proxy, method, args ->
-                        when {
-                            method.isObjectMethod("toString", 0) ->
-                                "BBZQUnderPlayerProxy(${original.javaClass.name})"
-                            method.isObjectMethod("hashCode", 0) ->
-                                System.identityHashCode(proxy)
-                            method.isObjectMethod("equals", 1) ->
-                                proxy === args?.firstOrNull()
-                            method.name in BLOCKED_METHODS -> {
-                                logBlocked(method.name)
-                                null
+                        runCatching {
+                            when {
+                                method.isObjectMethod("toString", 0) ->
+                                    "BBZQUnderPlayerProxy(${original.javaClass.name})"
+                                method.isObjectMethod("hashCode", 0) ->
+                                    System.identityHashCode(proxy)
+                                method.isObjectMethod("equals", 1) ->
+                                    proxy === args?.firstOrNull()
+                                method.name in BLOCKED_METHODS -> {
+                                    logBlocked(method.name)
+                                    null
+                                }
+                                else ->
+                                    invokeOriginal(original, method, args)
                             }
-                            else ->
-                                invokeOriginal(original, method, args)
+                        }.getOrElse {
+                            log("VideoDetailBannerAd underPlayer proxy failed at ${method.declaringClass.name}.${method.name}", it)
+                            invokeOriginal(original, method, args)
                         }
                     },
                 )
@@ -215,22 +239,27 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         synchronized(relateProxies) {
             relateProxies.getOrPut(original) {
                 Proxy.newProxyInstance(
-                    classLoader,
-                    arrayOf(relateType),
+                    original.javaClass.classLoader ?: classLoader,
+                    collectProxyInterfaces(original, relateType),
                     InvocationHandler { proxy, method, args ->
-                        when {
-                            method.isObjectMethod("toString", 0) ->
-                                "BBZQRelateProxy(${original.javaClass.name})"
-                            method.isObjectMethod("hashCode", 0) ->
-                                System.identityHashCode(proxy)
-                            method.isObjectMethod("equals", 1) ->
-                                proxy === args?.firstOrNull()
-                            method.name == "getAdRelateView" -> {
-                                logBlocked(method.name)
-                                null
+                        runCatching {
+                            when {
+                                method.isObjectMethod("toString", 0) ->
+                                    "BBZQRelateProxy(${original.javaClass.name})"
+                                method.isObjectMethod("hashCode", 0) ->
+                                    System.identityHashCode(proxy)
+                                method.isObjectMethod("equals", 1) ->
+                                    proxy === args?.firstOrNull()
+                                method.name == "getAdRelateView" -> {
+                                    logBlocked(method.name)
+                                    null
+                                }
+                                else ->
+                                    invokeOriginal(original, method, args)
                             }
-                            else ->
-                                invokeOriginal(original, method, args)
+                        }.getOrElse {
+                            log("VideoDetailBannerAd relate proxy failed at ${method.declaringClass.name}.${method.name}", it)
+                            invokeOriginal(original, method, args)
                         }
                     },
                 )
@@ -241,22 +270,27 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         synchronized(merchandiseProxies) {
             merchandiseProxies.getOrPut(original) {
                 Proxy.newProxyInstance(
-                    classLoader,
-                    arrayOf(merchandiseType),
+                    original.javaClass.classLoader ?: classLoader,
+                    collectProxyInterfaces(original, merchandiseType),
                     InvocationHandler { proxy, method, args ->
-                        when {
-                            method.isObjectMethod("toString", 0) ->
-                                "BBZQMerchandiseProxy(${original.javaClass.name})"
-                            method.isObjectMethod("hashCode", 0) ->
-                                System.identityHashCode(proxy)
-                            method.isObjectMethod("equals", 1) ->
-                                proxy === args?.firstOrNull()
-                            method.name == "getAdMerchandiseView" -> {
-                                logBlocked(method.name)
-                                null
+                        runCatching {
+                            when {
+                                method.isObjectMethod("toString", 0) ->
+                                    "BBZQMerchandiseProxy(${original.javaClass.name})"
+                                method.isObjectMethod("hashCode", 0) ->
+                                    System.identityHashCode(proxy)
+                                method.isObjectMethod("equals", 1) ->
+                                    proxy === args?.firstOrNull()
+                                method.name == "getAdMerchandiseView" -> {
+                                    logBlocked(method.name)
+                                    null
+                                }
+                                else ->
+                                    invokeOriginal(original, method, args)
                             }
-                            else ->
-                                invokeOriginal(original, method, args)
+                        }.getOrElse {
+                            log("VideoDetailBannerAd merchandise proxy failed at ${method.declaringClass.name}.${method.name}", it)
+                            invokeOriginal(original, method, args)
                         }
                     },
                 )
@@ -272,6 +306,13 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun Method.isObjectMethod(name: String, parameterCount: Int): Boolean =
         declaringClass == Any::class.java && this.name == name && this.parameterCount == parameterCount
+
+    private fun collectProxyInterfaces(original: Any, primaryType: Class<*>): Array<Class<*>> =
+        buildSet {
+            add(primaryType)
+            original.javaClass.interfaces.forEach(::add)
+            original.javaClass.takeIf { it.isInterface }?.let(::add)
+        }.toTypedArray()
 
     private fun isRelateGameComponent(value: Any?): Boolean =
         value?.javaClass?.name == RELATE_GAME_COMPONENT
