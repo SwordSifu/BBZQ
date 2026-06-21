@@ -50,12 +50,20 @@ class DownloadThreadHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 env.hookAfter(ctor) { param ->
                     val view = param.args.firstOrNull { it is TextView } as? TextView ?: return@hookAfter
                     view.post {
-                        val parent = view.parent as? ViewGroup ?: return@post
-                        val custom = view.tag as? Int == 1
-                        if (custom) {
-                            view.text = env.hostContext.getString(R.string.custom_download_thread_label)
+                        runCatching {
+                            val parent = view.parent as? ViewGroup ?: return@runCatching
+                            val custom = view.tag as? Int == 1
+                            if (custom) {
+                                val moduleContext = env.moduleContext ?: run {
+                                    log("DownloadThread label skipped because module context is unavailable")
+                                    return@runCatching
+                                }
+                                view.text = moduleContext.getString(R.string.custom_download_thread_label)
+                            }
+                            parent.getChildAt(1)?.visibility = if (custom) View.VISIBLE else View.INVISIBLE
+                        }.onFailure { throwable ->
+                            log("DownloadThread label update failed", throwable)
                         }
-                        parent.getChildAt(1)?.visibility = if (custom) View.VISIBLE else View.INVISIBLE
                     }
                 }
                 count++

@@ -20,17 +20,21 @@ class FreeCopyHook(env: RoamingEnv) : BaseRoamingHook(env) {
         ensureActivityTracking()
         val method = ClipboardManager::class.java.getDeclaredMethod("setPrimaryClip", ClipData::class.java)
         env.hookBefore(method) { param ->
-            if (!isRemoveDirectCopyEnabled()) return@hookBefore
-            if (allowOriginalCopy.get() == true) return@hookBefore
+            runCatching {
+                if (!isRemoveDirectCopyEnabled()) return@runCatching
+                if (allowOriginalCopy.get() == true) return@runCatching
 
-            val clip = param.args.firstOrNull() as? ClipData ?: return@hookBefore
-            val text = extractText(clip) ?: return@hookBefore
-            if (shouldBypassCopy(text)) return@hookBefore
+                val clip = param.args.firstOrNull() as? ClipData ?: return@runCatching
+                val text = extractText(clip) ?: return@runCatching
+                if (shouldBypassCopy(text)) return@runCatching
 
-            if (isEnhancedCopyEnabled()) {
-                showCopyDialog(text, clip)
+                if (isEnhancedCopyEnabled()) {
+                    showCopyDialog(text, clip)
+                }
+                param.result = null
+            }.onFailure { throwable ->
+                log("FreeCopy hook error", throwable)
             }
-            param.result = null
         }
         log("startHook: FreeCopy, methods=1")
     }
@@ -94,28 +98,39 @@ class FreeCopyHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
         activity.runOnUiThread {
-            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+            runCatching {
+                if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
 
-            val themeId = activity.resources.getIdentifier("AppTheme.Dialog.Alert", "style", activity.packageName)
-            val builder = if (themeId != 0) {
-                AlertDialog.Builder(activity, themeId)
-            } else {
-                AlertDialog.Builder(activity)
-            }
-
-            val dialog = builder
-                .setTitle(R.string.free_copy_title)
-                .setMessage(text)
-                .setPositiveButton(R.string.free_copy_original_button) { _, _ ->
-                    val clipboard = activity.getSystemService(ClipboardManager::class.java)
-                    runWithOriginalCopy {
-                        clipboard.setPrimaryClip(clip)
-                    }
+                val moduleContext = env.moduleContext ?: run {
+                    log("FreeCopy skipped dialog because module context is unavailable")
+                    return@runCatching
                 }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
+                val dialogTitle = moduleContext.getString(R.string.free_copy_title)
+                val originalCopyText = moduleContext.getString(R.string.free_copy_original_button)
 
-            dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+                val themeId = activity.resources.getIdentifier("AppTheme.Dialog.Alert", "style", activity.packageName)
+                val builder = if (themeId != 0) {
+                    AlertDialog.Builder(activity, themeId)
+                } else {
+                    AlertDialog.Builder(activity)
+                }
+
+                val dialog = builder
+                    .setTitle(dialogTitle)
+                    .setMessage(text)
+                    .setPositiveButton(originalCopyText) { _, _ ->
+                        val clipboard = activity.getSystemService(ClipboardManager::class.java)
+                        runWithOriginalCopy {
+                            clipboard.setPrimaryClip(clip)
+                        }
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+
+                dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+            }.onFailure { throwable ->
+                log("FreeCopy dialog error", throwable)
+            }
         }
     }
 

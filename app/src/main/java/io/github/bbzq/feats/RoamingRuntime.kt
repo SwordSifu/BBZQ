@@ -3,6 +3,7 @@
 import android.content.Context
 import android.content.SharedPreferences
 import io.github.bbzq.ModuleSettingsBridge
+import kotlin.LazyThreadSafetyMode
 import io.github.bbzq.feats.hook.BottomBarHook
 import io.github.bbzq.feats.hook.AutoLikeHook
 import io.github.bbzq.feats.hook.AccessKeyHook
@@ -131,12 +132,24 @@ class RoamingEnv(
     val prefs: SharedPreferences
         get() = ModuleSettingsBridge.instance
 
+    val moduleContext: Context? by lazy(LazyThreadSafetyMode.NONE) {
+        runCatching {
+            hostContext.createPackageContext(MODULE_PACKAGE, Context.CONTEXT_IGNORE_SECURITY)
+        }
+            .onFailure { throwable ->
+                logger("Failed to create module context for $MODULE_PACKAGE", throwable)
+            }
+            .getOrNull()
+    }
+
     fun log(message: String, throwable: Throwable? = null) {
         logger(message, throwable)
     }
 
     companion object
 }
+
+private const val MODULE_PACKAGE = "io.github.bbzq"
 
 abstract class BaseRoamingHook(
     protected val env: RoamingEnv,
