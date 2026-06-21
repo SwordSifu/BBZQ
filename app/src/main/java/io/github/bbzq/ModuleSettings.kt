@@ -24,6 +24,9 @@ object ModuleSettings {
     const val KEY_PURIFY_HOME_RECOMMEND_PICTURE_ENABLED = "purify_home_recommend_picture_enabled"
     const val KEY_PURIFY_HOME_RECOMMEND_GAME_PROMO_ENABLED = "purify_home_recommend_game_promo_enabled"
     const val KEY_BLOCK_HOME_RECOMMEND_AUTO_REFRESH_ENABLED = "block_home_recommend_auto_refresh_enabled"
+    const val KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED = "custom_home_recommend_filter_enabled"
+    const val KEY_HIDDEN_HOME_RECOMMEND_ITEMS = "hidden_home_recommend_items"
+    const val KEY_KNOWN_HOME_RECOMMEND_ITEMS = "known_home_recommend_items"
     const val KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED = "hide_all_home_components_enabled"
     const val KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED = "custom_home_component_hide_enabled"
     const val KEY_HIDDEN_HOME_COMPONENTS = "hidden_home_components"
@@ -113,6 +116,9 @@ object ModuleSettings {
         SponsorBlockCategory("exclusive_access", "独家访问 / 抢先体验", "用于整段视频标签，例如仅限会员或抢先看的内容。", 0xFF008A5C.toInt(), 0xFF00543A.toInt()),
     )
 
+    @Volatile
+    private var skipVideoAdCache: SkipVideoAdCache? = null
+
     fun isSkipSplashAdEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_SPLASH_AD_ENABLED, true)
 
@@ -125,22 +131,30 @@ object ModuleSettings {
     fun isSkipVideoAdEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_VIDEO_AD_ENABLED, false)
 
-    fun getSkipVideoAdMode(prefs: SharedPreferences, category: String): SkipVideoAdMode =
-        if (prefs.contains("$KEY_SKIP_VIDEO_AD_MODE_PREFIX$category")) {
-                SkipVideoAdMode.fromValue(
-                    prefs.getInt(
-                        "$KEY_SKIP_VIDEO_AD_MODE_PREFIX$category",
-                        defaultSkipVideoAdModes[category]?.value ?: SkipVideoAdMode.IGNORE.value,
-                    ),
-                )
-        } else {
-            val legacyCategories = prefs.getStringSet(KEY_SKIP_VIDEO_AD_CATEGORIES, null)
-            if (legacyCategories != null) {
-                if (category in legacyCategories) SkipVideoAdMode.AUTO_SKIP else SkipVideoAdMode.IGNORE
-            } else {
-                defaultSkipVideoAdModes[category] ?: SkipVideoAdMode.IGNORE
-            }
+    fun refreshSkipVideoAdCache(prefs: SharedPreferences): SkipVideoAdCache =
+        SkipVideoAdCache(
+            enabled = prefs.getBoolean(KEY_SKIP_VIDEO_AD_ENABLED, false),
+            modes = buildMap {
+                val legacyCategories = prefs.getStringSet(KEY_SKIP_VIDEO_AD_CATEGORIES, null)
+                skipVideoAdCategories.forEach { category ->
+                    put(category.key, resolveSkipVideoAdMode(prefs, category.key, legacyCategories))
+                }
+            },
+        ).also { cache ->
+            skipVideoAdCache = cache
         }
+
+    fun getSkipVideoAdCache(prefs: SharedPreferences): SkipVideoAdCache =
+        skipVideoAdCache ?: refreshSkipVideoAdCache(prefs)
+
+    fun isSkipVideoAdEnabledCached(prefs: SharedPreferences): Boolean =
+        getSkipVideoAdCache(prefs).enabled
+
+    fun getSkipVideoAdMode(prefs: SharedPreferences, category: String): SkipVideoAdMode =
+        resolveSkipVideoAdMode(prefs, category)
+
+    fun getSkipVideoAdModeCached(prefs: SharedPreferences, category: String): SkipVideoAdMode =
+        getSkipVideoAdCache(prefs).modes[category] ?: SkipVideoAdMode.IGNORE
 
     fun getSkipVideoAdCategories(prefs: SharedPreferences): Set<String> =
         skipVideoAdCategories
@@ -148,6 +162,9 @@ object ModuleSettings {
             .filter { getSkipVideoAdMode(prefs, it.key) != SkipVideoAdMode.IGNORE }
             .map { it.key }
             .toSet()
+
+    fun getSkipVideoAdCategoriesCached(prefs: SharedPreferences): Set<String> =
+        getSkipVideoAdCache(prefs).enabledCategories
 
     fun isSkipVideoAdSettingsVisible(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_VIDEO_AD_SETTINGS_VISIBLE, false)
@@ -181,6 +198,15 @@ object ModuleSettings {
 
     fun isBlockHomeRecommendAutoRefreshEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_BLOCK_HOME_RECOMMEND_AUTO_REFRESH_ENABLED, false)
+
+    fun isCustomHomeRecommendFilterEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED, false)
+
+    fun getHiddenHomeRecommendItems(prefs: SharedPreferences): Set<String> =
+        prefs.getStringSet(KEY_HIDDEN_HOME_RECOMMEND_ITEMS, emptySet()) ?: emptySet()
+
+    fun getKnownHomeRecommendItems(prefs: SharedPreferences): Set<String> =
+        prefs.getStringSet(KEY_KNOWN_HOME_RECOMMEND_ITEMS, emptySet()) ?: emptySet()
 
     fun isHideAllHomeComponentsEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED, false)
@@ -281,6 +307,24 @@ object ModuleSettings {
 
     fun isMineKeepVipSpaceEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_MINE_KEEP_VIP_SPACE, false)
+
+    private fun resolveSkipVideoAdMode(
+        prefs: SharedPreferences,
+        category: String,
+        legacyCategories: Set<String>? = prefs.getStringSet(KEY_SKIP_VIDEO_AD_CATEGORIES, null),
+    ): SkipVideoAdMode =
+        if (prefs.contains("$KEY_SKIP_VIDEO_AD_MODE_PREFIX$category")) {
+            SkipVideoAdMode.fromValue(
+                prefs.getInt(
+                    "$KEY_SKIP_VIDEO_AD_MODE_PREFIX$category",
+                    defaultSkipVideoAdModes[category]?.value ?: SkipVideoAdMode.IGNORE.value,
+                ),
+            )
+        } else if (legacyCategories != null) {
+            if (category in legacyCategories) SkipVideoAdMode.AUTO_SKIP else SkipVideoAdMode.IGNORE
+        } else {
+            defaultSkipVideoAdModes[category] ?: SkipVideoAdMode.IGNORE
+        }
 }
 
 enum class SkipVideoAdMode(val value: Int, val label: String) {
@@ -308,3 +352,14 @@ data class SponsorBlockCategory(
     val color: Int,
     val previewColor: Int,
 )
+
+data class SkipVideoAdCache(
+    val enabled: Boolean,
+    val modes: Map<String, SkipVideoAdMode>,
+) {
+    val enabledCategories: Set<String> = modes
+        .asSequence()
+        .filter { (_, mode) -> mode != SkipVideoAdMode.IGNORE }
+        .map { (category, _) -> category }
+        .toSet()
+}
