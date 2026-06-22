@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
+import android.widget.ProgressBar
 import dalvik.system.BaseDexClassLoader
 import dalvik.system.DexFile
 import io.github.bbzq.ModuleSettings
@@ -22,9 +23,26 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (!ModuleSettings.isSkipVideoAdEnabledCached(prefs)) return
 
         var count = 0
+        count += hookSystemSeekBar()
         count += hookSystemProgressBar()
         count += hookCustomProgressBars()
         log("startHook: SkipVideoAdProgress, methods=$count")
+    }
+
+    private fun hookSystemSeekBar(): Int {
+        val seekBar = "android.widget.AbsSeekBar".from(classLoader) ?: return 0
+        return runCatching {
+            env.hookAfterMethod(seekBar, "onDraw", Canvas::class.java) { param ->
+                runCatching {
+                    drawSegments(param.thisObject as? View, param.args.firstOrNull() as? Canvas)
+                }.onFailure {
+                    log("SkipVideoAdProgress draw hook failed at AbsSeekBar.onDraw", it)
+                }
+            }
+        }.getOrElse {
+            log("SkipVideoAdProgress failed to hook AbsSeekBar.onDraw", it)
+            0
+        }
     }
 
     private fun hookSystemProgressBar(): Int {
@@ -80,26 +98,69 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (!config.enabled) return
 
         val segments = SkipVideoAdState.segments
-        val durationMs = SkipVideoAdState.durationMs
+        val progressBar = view as? ProgressBar
+        val durationMs = SkipVideoAdState.durationMs.takeIf { it > 0L }
+            ?: progressBar?.max?.takeIf { it > 0 }?.toLong()
+            ?: 0L
         if (segments.isEmpty() || durationMs <= 0L) return
 
         val width = view.width
         val height = view.height
-        val availableWidth = width - view.paddingLeft - view.paddingRight
-        if (availableWidth <= 0 || height <= 0) return
+        if (width <= 0 || height <= 0) return
 
-        val top = height * 0.44f
-        val bottom = height * 0.56f
+        val rawBounds = progressBar?.progressDrawable?.bounds
+        val saneBounds = rawBounds?.takeIf { b ->
+            b.left >= 0 && b.right > b.left && b.right <= width &&
+                    b.top >= 0 && b.bottom > b.top && b.bottom <= height &&
+                    (b.bottom - b.top) < height
+        }
+
+        val leftBound = saneBounds?.left?.toFloat()?.takeIf { it < width } ?: view.paddingLeft.toFloat()
+        val rightBound = saneBounds?.right?.toFloat()?.takeIf { it > leftBound }
+            ?: (width - view.paddingRight).toFloat()
+        val availableWidth = rightBound - leftBound
+        if (availableWidth <= 0f) return
+
+        val density = view.resources.displayMetrics.density
+
+        val drawableTop = saneBounds?.top?.toFloat()
+        val drawableBottom = saneBounds?.bottom?.toFloat()
+
+        val top: Float
+        val bottom: Float
+
+        if (drawableTop != null && drawableBottom != null && drawableBottom > drawableTop) {
+            val trackHeight = drawableBottom - drawableTop
+            val markerHeight = trackHeight.coerceAtMost(3f * density)
+            val centerY = (drawableTop + drawableBottom) / 2f
+            top = centerY - (markerHeight / 2f)
+            bottom = centerY + (markerHeight / 2f)
+        } else {
+            val fallbackMarkerHeight = 3f * density
+            val fallbackBottom = (height - view.paddingBottom).toFloat().coerceAtLeast(fallbackMarkerHeight)
+            top = (fallbackBottom - fallbackMarkerHeight).coerceAtLeast(0f)
+            bottom = fallbackBottom
+        }
+
         val radius = (bottom - top) / 2f
 
         segments.forEach { segment ->
             if ((config.modes[segment.category] ?: SkipVideoAdMode.IGNORE) == SkipVideoAdMode.IGNORE) {
                 return@forEach
             }
-            val startX = view.paddingLeft + ((segment.segment[0] * 1000f) / durationMs) * availableWidth
-            val endX = view.paddingLeft + ((segment.segment[1] * 1000f) / durationMs) * availableWidth
-            val safeStart = startX.coerceIn(view.paddingLeft.toFloat(), (width - view.paddingRight).toFloat())
-            val safeEnd = endX.coerceIn(safeStart + MIN_MARKER_WIDTH_PX, (width - view.paddingRight).toFloat())
+            val startX = leftBound + ((segment.segment[0] * 1000f) / durationMs) * availableWidth
+            val endX = leftBound + ((segment.segment[1] * 1000f) / durationMs) * availableWidth
+            var safeStart = startX.coerceIn(leftBound, rightBound)
+            val rawEnd = endX.coerceIn(leftBound, rightBound)
+            if (rightBound - safeStart < MIN_MARKER_WIDTH_PX) {
+                safeStart = (rightBound - MIN_MARKER_WIDTH_PX).coerceAtLeast(leftBound)
+            }
+            val safeEnd = if (rightBound - safeStart <= MIN_MARKER_WIDTH_PX) {
+                rightBound
+            } else {
+                rawEnd.coerceIn(safeStart + MIN_MARKER_WIDTH_PX, rightBound)
+            }
+            if (safeEnd <= safeStart) return@forEach
             sharedRect.set(safeStart, top, safeEnd, bottom)
 
             fillPaint.color = colorFor(segment.category)
@@ -153,14 +214,19 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
         private val CUSTOM_PROGRESS_CLASSES = arrayOf(
+            "com.bilibili.p4439app.p4450comm.p4472list.common.inline.widgetV3.InlineProgressWidgetV3",
+            "com.bilibili.p4440app.p4451comm.p4473list.common.inline.widgetV3.InlineProgressWidgetV3",
             "com.bilibili.playerbizcommonv2.widget.seek.v3.PlayerSeekWidget3",
             "com.bilibili.playerbizcommonv2.widget.seek.PlayerSeekWidget",
             "com.bilibili.playerbizcommonv2.widget.seek.v2.PlayerSeekWidget2",
+            "com.bilibili.playerbizcommonv2.widget.p5771seek.p5772v3.HeatPeakView",
             "tv.danmaku.bili.ui.video.player.view.VideoSeekBar",
             "tv.danmaku.bili.player.view.PlayerSeekBar",
             "tv.danmaku.bili.player.widget.VideoProgressBar",
             "tv.danmaku.bili.player.widget.PlayerSeekBar",
             "com.bilibili.p4439app.p4450comm.p4472list.common.inline.widgetV3.InlineGestureSeekWidgetV3",
+            "com.bilibili.p4439app.p4450comm.p4472list.common.inline.p4478view.InlineGestureSeekBar",
+            "com.bilibili.p4440app.p4451comm.p4473list.common.inline.p4479view.InlineGestureSeekBar",
             "com.bilibili.p5336lib.projection.internal.widget.halfscreen.ProjectionHalScreenSeekWidget",
             "com.bilibili.p5336lib.projection.internal.widget.fullscreen.ProjectionFullScreenSeekWidget",
             "com.bilibili.p5336lib.projection.internal.widget.fullscreen.newui.ProjectionSeekBarWidget",

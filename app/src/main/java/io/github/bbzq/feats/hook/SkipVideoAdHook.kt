@@ -40,15 +40,18 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private val manualNotifiedSegments = ConcurrentHashMap.newKeySet<String>()
 
     private var waitTime = CHECK_INTERVAL_MS
-    private var playerRef: WeakReference<Any>? = null
-    private val player: Any?
-        get() = playerRef?.get()
+    private var playerCoreServiceRef: WeakReference<Any>? = null
+    private var cardPlayerContextRef: WeakReference<Any>? = null
+    private val playerCoreService: Any?
+        get() = playerCoreServiceRef?.get()
+    private val cardPlayerContext: Any?
+        get() = cardPlayerContextRef?.get()
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun startHook() {
         ModuleSettings.refreshSkipVideoAdCache(prefs)
         ensureActivityTracking()
-        val count = hookPlayViewUnite() + hookPlayerCoreService()
+        val count = hookPlayViewUnite() + hookPlayerCoreService() + hookCardPlayerContext()
         log("startHook: SkipVideoAd, methods=$count")
         if (isEnabled() && count == 0 && env.processName == env.packageName) {
             toast("跳过视频广告未找到播放器接口")
@@ -201,13 +204,22 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun hookPlayerCoreService(): Int {
         var count = 0
         findPlayerCoreServiceClasses().forEach { type ->
-            count += hookCurrentPosition(type)
-            count += hookPlayerState(type)
+            count += hookCurrentPosition(type, STATE_METHOD_NAMES)
+            count += hookPlayerState(type, STATE_METHOD_NAMES)
         }
         return count
     }
 
-    private fun hookCurrentPosition(type: Class<*>): Int {
+    private fun hookCardPlayerContext(): Int {
+        var count = 0
+        findCardPlayerContextClasses().forEach { type ->
+            count += hookCurrentPosition(type, CARD_STATE_METHOD_NAMES)
+            count += hookPlayerState(type, CARD_STATE_METHOD_NAMES)
+        }
+        return count
+    }
+
+    private fun hookCurrentPosition(type: Class<*>, stateMethodNames: Set<String>): Int {
         val methods = type.allMethods()
             .filter {
                 it.name == "getCurrentPosition" &&
@@ -223,16 +235,21 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 env.hookAfter(method) { param ->
                     runCatching {
                         if (!isEnabled()) return@runCatching
-                        val service = param.thisObject ?: return@runCatching
-                        playerRef = WeakReference(service)
+                        val controller = param.thisObject ?: return@runCatching
+                        rememberPlayerController(controller, stateMethodNames)
                         if (duration <= 0) {
-                            duration = service.callMethod("getDuration").asLong() ?: -1L
+                            duration = resolveDuration(controller)
                             if (duration > 0) {
                                 SkipVideoAdState.durationMs = duration
                             }
                         }
                         fetchSegmentsIfNeeded()
                         val position = param.result.asLong() ?: return@runCatching
+                        val state = resolveState(controller, stateMethodNames)
+                        if (state in RESET_PLAYER_STATES) {
+                            resetPlaybackState(fetchImmediately = false)
+                            return@runCatching
+                        }
                         val now = System.currentTimeMillis()
                         if (now - lastSeekTime > waitTime) {
                             lastSeekTime = now
@@ -250,10 +267,10 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         return count
     }
 
-    private fun hookPlayerState(type: Class<*>): Int {
+    private fun hookPlayerState(type: Class<*>, stateMethodNames: Set<String>): Int {
         val methods = type.allMethods()
             .filter {
-                it.name == "getState" &&
+                it.name in stateMethodNames &&
                     it.parameterCount == 0 &&
                     it.returnType.isNumericType()
             }
@@ -266,23 +283,17 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                 env.hookAfter(method) { param ->
                     runCatching {
                         if (!isEnabled()) return@runCatching
-                        val service = param.thisObject ?: return@runCatching
-                        playerRef = WeakReference(service)
+                        val controller = param.thisObject ?: return@runCatching
+                        rememberPlayerController(controller, stateMethodNames)
                         val state = param.result.asInt() ?: return@runCatching
                         if (state in 3..5 && duration <= 0) {
-                            duration = service.callMethod("getDuration").asLong() ?: -1L
+                            duration = resolveDuration(controller)
                             if (duration > 0) {
                                 SkipVideoAdState.durationMs = duration
                             }
                         }
-                        if (state == 2) {
-                            duration = -1L
-                            segments = emptyList()
-                            SkipVideoAdState.durationMs = 0L
-                            SkipVideoAdState.segments = emptyList()
-                            segmentsKey = ""
-                            manualNotifiedSegments.clear()
-                            fetchSegmentsIfNeeded()
+                        if (state in RESET_PLAYER_STATES) {
+                            resetPlaybackState(fetchImmediately = true)
                         }
                     }.onFailure {
                         log("SkipVideoAd playerState callback failed at ${method.declaringClass.name}.${method.name}", it)
@@ -296,6 +307,41 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         return count
     }
 
+    private fun resolveDuration(controller: Any): Long {
+        return controller.callMethod("getDuration").asLong()
+            ?: controller.callMethod("getRealDuration").asLong()
+            ?: -1L
+    }
+
+    private fun rememberPlayerController(controller: Any, stateMethodNames: Set<String>) {
+        if ("getPlayerState" in stateMethodNames) {
+            cardPlayerContextRef = WeakReference(controller)
+        } else {
+            playerCoreServiceRef = WeakReference(controller)
+        }
+    }
+
+    private fun resolveState(controller: Any, methodNames: Set<String>): Int? {
+        methodNames.forEach { name ->
+            controller.callMethod(name).asInt()?.let { return it }
+        }
+        return null
+    }
+
+    private fun resetPlaybackState(fetchImmediately: Boolean) {
+        duration = -1L
+        segments = emptyList()
+        SkipVideoAdState.durationMs = 0L
+        SkipVideoAdState.segments = emptyList()
+        segmentsKey = ""
+        manualNotifiedSegments.clear()
+        playerCoreServiceRef = null
+        cardPlayerContextRef = null
+        if (fetchImmediately) {
+            fetchSegmentsIfNeeded()
+        }
+    }
+
     private fun findPlayerCoreServiceClasses(): List<Class<*>> {
         val serviceInterface = PLAYER_CORE_SERVICE_INTERFACE.from(classLoader)
         val candidates = linkedSetOf<Class<*>>()
@@ -306,6 +352,20 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             .filter(::mightBePlayerCoreServiceName)
             .mapNotNull { name -> runCatching { Class.forName(name, false, classLoader) }.getOrNull() }
             .filter { it.isPlayerCoreService(serviceInterface) }
+            .forEach { candidates += it }
+
+        return candidates.distinctBy { it.name }
+    }
+
+    private fun findCardPlayerContextClasses(): List<Class<*>> {
+        val contextInterface = CARD_PLAYER_CONTEXT_INTERFACE.from(classLoader)
+        val candidates = linkedSetOf<Class<*>>()
+
+        CARD_PLAYER_CONTEXT_CANDIDATES.mapNotNullTo(candidates) { it.from(classLoader) }
+
+        dexClassNames()
+            .mapNotNull { name -> runCatching { Class.forName(name, false, classLoader) }.getOrNull() }
+            .filter { it.isCardPlayerContext(contextInterface) }
             .forEach { candidates += it }
 
         return candidates.distinctBy { it.name }
@@ -336,6 +396,15 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (serviceInterface?.isAssignableFrom(this) == true) return true
         return hasNoArgNumericMethod("getCurrentPosition") &&
             hasNoArgNumericMethod("getDuration") &&
+            allMethods().any { it.isSeekToMethod() }
+    }
+
+    private fun Class<*>.isCardPlayerContext(contextInterface: Class<*>?): Boolean {
+        if (isInterface || Modifier.isAbstract(modifiers)) return false
+        if (contextInterface?.isAssignableFrom(this) == true) return true
+        return hasNoArgNumericMethod("getCurrentPosition") &&
+            hasNoArgNumericMethod("getDuration") &&
+            hasNoArgNumericMethod("getPlayerState") &&
             allMethods().any { it.isSeekToMethod() }
     }
 
@@ -429,8 +498,24 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private fun seekPlayerTo(position: Long, segment: BilibiliSponsorBlock.Segment): Boolean {
-        val service = player ?: return false
-        val method = service.javaClass.allMethods()
+        val controllers = buildList {
+            cardPlayerContext?.let(::add)
+            playerCoreService?.let(::add)
+        }.distinctBy { it.javaClass.name }
+        if (controllers.isEmpty()) return false
+
+        controllers.forEach { controller ->
+            if (invokeSeek(controller, position)) {
+                log("SkipVideoAd skipped ${segment.category} to $position via ${controller.javaClass.name}")
+                toast(skipToastMessage(segment))
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun invokeSeek(controller: Any, position: Long): Boolean {
+        val method = controller.javaClass.allMethods()
             .firstOrNull { it.isSeekToMethod() }
             ?: return false
         val args = when (method.parameterCount) {
@@ -439,12 +524,10 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             else -> return false
         }
         return runCatching {
-            method.invoke(service, *args)
-            log("SkipVideoAd skipped ${segment.category} to $position")
-            toast(skipToastMessage(segment))
+            method.invoke(controller, *args)
             true
         }.onFailure {
-            log("SkipVideoAd seekTo failed", it)
+            log("SkipVideoAd seekTo failed via ${controller.javaClass.name}", it)
         }.getOrDefault(false)
     }
 
@@ -583,16 +666,23 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private companion object {
         private const val PLAYER_CORE_SERVICE_INTERFACE = "tv.danmaku.biliplayerv2.service.IPlayerCoreService"
+        private const val CARD_PLAYER_CONTEXT_INTERFACE = "tv.danmaku.video.bilicardplayer.ICardPlayerContext"
         private const val BV_TABLE = "FcwAPNKTMug3GV5Lj7EJnHpWsx4tb8haYeviqBz6rkCy12mUSDQX9RdoZf"
         private const val CHECK_INTERVAL_MS = 250L
         private const val PRE_SKIP_THRESHOLD_MS = 300L
         private const val SKIP_COOLDOWN_MS = 1000L
         private val PLAY_VIEW_METHOD_NAMES = setOf("executePlayViewUnite", "playViewUnite")
+        private val STATE_METHOD_NAMES = setOf("getState")
+        private val CARD_STATE_METHOD_NAMES = setOf("getPlayerState", "getState")
+        private val RESET_PLAYER_STATES = setOf(2)
 
         private val PLAYER_CORE_SERVICE_CANDIDATES = arrayOf(
             "tv.danmaku.biliplayerv2.service.PlayerCoreService",
             "tv.danmaku.biliplayerimpl.core.PlayerCoreService",
             "com.bilibili.playerbizcommon.service.PlayerCoreService",
+        )
+        private val CARD_PLAYER_CONTEXT_CANDIDATES = arrayOf(
+            "tv.danmaku.video.bilicardplayer.CardPlayerContext",
         )
         private val PLAYER_MOSS_CANDIDATES = arrayOf(
             "com.bapis.bilibili.app.playerunite.v1.PlayerMoss",
