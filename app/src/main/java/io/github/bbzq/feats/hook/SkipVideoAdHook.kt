@@ -1,11 +1,17 @@
 package io.github.bbzq.feats.hook
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Application
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import io.github.bbzq.ModuleSettings
@@ -27,17 +33,17 @@ import java.util.concurrent.ConcurrentHashMap
 class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     @Volatile private var lastSeekTime = 0L
     @Volatile private var duration = -1L
-    @Volatile private var segments: List<BilibiliSponsorBlock.Segment> = emptyList()
-    @Volatile private var segmentsKey = ""
-    @Volatile private var loadingSegments = false
     @Volatile private var bvid = ""
     @Volatile private var cid = ""
+    @Volatile private var playbackKey = ""
+    private val autoSkippedSegments = ConcurrentHashMap.newKeySet<String>()
     private val manualNotifiedSegments = ConcurrentHashMap.newKeySet<String>()
 
     private var waitTime = CHECK_INTERVAL_MS
     private var playerCoreServiceRef: WeakReference<Any>? = null
     private var cardPlayerContextRef: WeakReference<Any>? = null
     private val reflectionFailureLogs = ConcurrentHashMap.newKeySet<String>()
+    private val discoveredControllerClasses = ConcurrentHashMap.newKeySet<String>()
     private val playerCoreService: Any?
         get() = playerCoreServiceRef?.get()
     private val cardPlayerContext: Any?
@@ -48,6 +54,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         ModuleSettings.refreshSkipVideoAdCache(prefs)
         if (!isEnabled()) return
         ensureActivityTracking()
+        observeBoundControllers()
         val count = installHookGroup("playView") { hookPlayViewUnite() } +
             installHookGroup("playerCore") { hookPlayerCoreService() } +
             installHookGroup("cardPlayer") { hookCardPlayerContext() }
@@ -62,6 +69,27 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             log("SkipVideoAd $label hook group failed", it)
             0
         }
+
+    private fun observeBoundControllers() {
+        SkipVideoAdState.observeControllers { controller ->
+            runCatching {
+                hookDiscoveredController(controller)
+            }.onFailure {
+                log("SkipVideoAd discovered controller hook failed at ${controller.javaClass.name}", it)
+            }
+        }
+    }
+
+    private fun hookDiscoveredController(controller: Any) {
+        val type = controller.javaClass
+        if (!discoveredControllerClasses.add(type.name)) return
+
+        val count = hookCurrentPosition(type, DYNAMIC_STATE_METHOD_NAMES) +
+            hookPlayerState(type, DYNAMIC_STATE_METHOD_NAMES)
+        if (count > 0) {
+            log("SkipVideoAd hooked discovered controller ${type.name}, methods=$count")
+        }
+    }
 
     private fun ensureActivityTracking() {
         val application = env.hostContext as? Application ?: return
@@ -187,13 +215,12 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
         bvid = identity.bvid
         cid = identity.cid
+        playbackKey = identity.key
         duration = -1L
-        segments = emptyList()
         SkipVideoAdState.activateVideo(identity)
         playerCoreService?.let { SkipVideoAdState.bindController(it, identity.key) }
         cardPlayerContext?.let { SkipVideoAdState.bindController(it, identity.key) }
-        segmentsKey = ""
-        loadingSegments = false
+        autoSkippedSegments.clear()
         manualNotifiedSegments.clear()
         waitTime = CHECK_INTERVAL_MS
         fetchSegmentsIfNeeded()
@@ -234,11 +261,11 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     runCatching {
                         if (!isEnabled()) return@runCatching
                         val controller = param.thisObject ?: return@runCatching
-                        rememberPlayerController(controller, stateMethodNames)
+                        val key = rememberPlayerController(controller, stateMethodNames)
                         if (duration <= 0) {
                             duration = resolveDuration(controller)
                             if (duration > 0) {
-                                SkipVideoAdState.updateDuration(videoKey(), duration)
+                                SkipVideoAdState.updateDuration(key, duration)
                             }
                         }
                         fetchSegmentsIfNeeded()
@@ -251,7 +278,11 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                         val now = System.currentTimeMillis()
                         if (now - lastSeekTime > waitTime) {
                             lastSeekTime = now
-                            waitTime = if (seekTo(position)) SKIP_COOLDOWN_MS else CHECK_INTERVAL_MS
+                            waitTime = if (seekTo(position, key, controller)) {
+                                SKIP_COOLDOWN_MS
+                            } else {
+                                CHECK_INTERVAL_MS
+                            }
                         }
                     }.onFailure {
                         log("SkipVideoAd currentPosition callback failed at ${method.declaringClass.name}.${method.name}", it)
@@ -282,12 +313,12 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     runCatching {
                         if (!isEnabled()) return@runCatching
                         val controller = param.thisObject ?: return@runCatching
-                        rememberPlayerController(controller, stateMethodNames)
+                        val key = rememberPlayerController(controller, stateMethodNames)
                         val state = param.result.asInt() ?: return@runCatching
                         if (state in 3..5 && duration <= 0) {
                             duration = resolveDuration(controller)
                             if (duration > 0) {
-                                SkipVideoAdState.updateDuration(videoKey(), duration)
+                                SkipVideoAdState.updateDuration(key, duration)
                             }
                         }
                         if (state in RESET_PLAYER_STATES) {
@@ -311,13 +342,25 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?: -1L
     }
 
-    private fun rememberPlayerController(controller: Any, stateMethodNames: Set<String>) {
-        if ("getPlayerState" in stateMethodNames) {
+    private fun rememberPlayerController(controller: Any, stateMethodNames: Set<String>): String {
+        if (controller.javaClass.name.contains("bilicardplayer") || stateMethodNames == CARD_STATE_METHOD_NAMES) {
             cardPlayerContextRef = WeakReference(controller)
         } else {
             playerCoreServiceRef = WeakReference(controller)
         }
-        SkipVideoAdState.bindController(controller, videoKey())
+        val key = SkipVideoAdState.keyForController(controller) ?: videoKey()
+        updatePlaybackKey(key)
+        SkipVideoAdState.bindController(controller, key)
+        return key
+    }
+
+    private fun updatePlaybackKey(key: String) {
+        if (key.isBlank() || key == playbackKey) return
+        playbackKey = key
+        duration = -1L
+        autoSkippedSegments.clear()
+        manualNotifiedSegments.clear()
+        waitTime = CHECK_INTERVAL_MS
     }
 
     private fun resolveState(controller: Any, methodNames: Set<String>): Int? {
@@ -329,8 +372,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun resetPlaybackState(fetchImmediately: Boolean) {
         duration = -1L
-        segments = emptyList()
-        segmentsKey = ""
+        autoSkippedSegments.clear()
         manualNotifiedSegments.clear()
         playerCoreServiceRef = null
         cardPlayerContextRef = null
@@ -361,72 +403,46 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (currentBvid.isBlank() || currentCid.isBlank()) return
 
         val identity = SkipVideoAdState.resolveVideoIdentity(currentBvid, currentCid) ?: return
-        val stateKey = identity.key
-        val requestKey = "${identity.bvid}/${identity.cid}"
-        if (loadingSegments || segmentsKey == requestKey) return
-
-        loadingSegments = true
-        segmentsKey = requestKey
-        Thread {
-            val enabledCategories = config.enabledCategories
-            var result = BilibiliSponsorBlock.FetchResult(
-                status = BilibiliSponsorBlock.FetchStatus.FAILED,
-                segments = emptyList(),
-            )
-            for (attempt in 0 until 3) {
-                result = BilibiliSponsorBlock(currentBvid, currentCid, enabledCategories).getSegments()
-                if (result.status != BilibiliSponsorBlock.FetchStatus.FAILED) break
-                if (attempt < 2) Thread.sleep(1000)
-            }
-
-            if (stateKey == videoKey()) {
-                segments = result.segments
-                SkipVideoAdState.updateSegments(stateKey, result.segments)
-                when (result.status) {
-                    BilibiliSponsorBlock.FetchStatus.SUCCESS -> {
-                        log("SkipVideoAd loaded ${result.segments.size} segment(s) for $requestKey")
-                        if (result.segments.isNotEmpty()) {
-                            toast("已加载 ${result.segments.size} 个空降片段${loadedCategorySuffix(result.segments)}")
-                        }
-                    }
-                    BilibiliSponsorBlock.FetchStatus.EMPTY,
-                    BilibiliSponsorBlock.FetchStatus.NOT_FOUND -> {
-                        log("SkipVideoAd found no skippable segments for $requestKey")
-                    }
-                    BilibiliSponsorBlock.FetchStatus.FAILED -> {
-                        toast("广告片段数据获取失败")
-                    }
-                }
-            }
-            loadingSegments = false
-        }.apply {
-            name = "BBZQ-SkipVideoAd"
-            isDaemon = true
-            start()
+        SkipVideoAdState.requestSegmentsIfMissing(identity, config.enabledCategories) { message, throwable ->
+            log(message, throwable)
         }
     }
 
     private fun videoKey(): String =
         SkipVideoAdState.resolveVideoIdentity(bvid, cid)?.key ?: ""
 
-    private fun seekTo(position: Long): Boolean {
+    private fun seekTo(position: Long, key: String, controller: Any): Boolean {
         val config = ModuleSettings.getSkipVideoAdCache(prefs)
         if (!config.enabled) return false
-        val videoDuration = duration
+        val state = timelineStateFor(key)
+        val videoDuration = state?.durationMs?.takeIf { it > 0L } ?: duration
         if (videoDuration > 0 && position > videoDuration) return false
 
-        segments.forEach { segment ->
+        state?.segments.orEmpty().forEach { segment ->
             val mode = config.modes[segment.category] ?: SkipVideoAdMode.IGNORE
             if (mode == SkipVideoAdMode.IGNORE) return@forEach
             val start = (segment.segment[0] * 1000).toLong()
             val end = (segment.segment[1] * 1000).toLong()
+            val segmentKey = playbackSegmentKey(state?.key ?: key, segment)
+            if (position < start - AUTO_SKIP_REARM_THRESHOLD_MS) {
+                autoSkippedSegments.remove("$segmentKey:auto")
+                manualNotifiedSegments.remove("$segmentKey:manual")
+                return@forEach
+            }
             if (position >= start - PRE_SKIP_THRESHOLD_MS && position < end) {
+                val seekTarget = skipTargetAfter(end, videoDuration)
                 return when (mode) {
-                    SkipVideoAdMode.AUTO_SKIP -> seekPlayerTo(end, segment)
+                    SkipVideoAdMode.AUTO_SKIP -> {
+                        val autoKey = "$segmentKey:auto"
+                        if (!autoSkippedSegments.add(autoKey)) return false
+                        seekPlayerTo(seekTarget, segment, controller).also { skipped ->
+                            if (!skipped) autoSkippedSegments.remove(autoKey)
+                        }
+                    }
                     SkipVideoAdMode.MANUAL_SKIP -> {
-                        val key = "${segmentStateKey(segment)}:manual"
-                        if (manualNotifiedSegments.add(key)) {
-                            showManualSkipDialog(end, segment)
+                        val manualKey = "$segmentKey:manual"
+                        if (manualNotifiedSegments.add(manualKey)) {
+                            showManualSkipPrompt(seekTarget, segment, controller)
                         }
                         false
                     }
@@ -438,11 +454,33 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         return false
     }
 
-    private fun seekPlayerTo(position: Long, segment: BilibiliSponsorBlock.Segment): Boolean {
+    private fun playbackSegmentKey(key: String, segment: BilibiliSponsorBlock.Segment): String =
+        key + ":" + segmentStateKey(segment)
+
+    private fun skipTargetAfter(end: Long, videoDuration: Long): Long {
+        val target = end + POST_SKIP_PADDING_MS
+        return if (videoDuration > 0) target.coerceAtMost(videoDuration) else target
+    }
+
+    private fun timelineStateFor(key: String): SkipVideoAdState.TimelineMarkerState? {
+        SkipVideoAdState.stateForKey(key)?.let { return it }
+        val fallbackKey = videoKey()
+        if (fallbackKey != key) {
+            SkipVideoAdState.stateForKey(fallbackKey)?.let { return it }
+        }
+        return SkipVideoAdState.activeStateForDuration(duration)
+    }
+
+    private fun seekPlayerTo(
+        position: Long,
+        segment: BilibiliSponsorBlock.Segment,
+        preferredController: Any? = null,
+    ): Boolean {
         val controllers = buildList {
+            preferredController?.let(::add)
             cardPlayerContext?.let(::add)
             playerCoreService?.let(::add)
-        }.distinctBy { it.javaClass.name }
+        }.distinctBy { System.identityHashCode(it) }
         if (controllers.isEmpty()) return false
 
         controllers.forEach { controller ->
@@ -506,7 +544,11 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
     }
 
-    private fun showManualSkipDialog(position: Long, segment: BilibiliSponsorBlock.Segment) {
+    private fun showManualSkipPrompt(
+        position: Long,
+        segment: BilibiliSponsorBlock.Segment,
+        controller: Any?,
+    ) {
         val activity = topActivity?.get()
         if (activity == null || activity.isFinishing || activity.isDestroyed) {
             toast(manualSkipToastMessage(segment))
@@ -516,28 +558,105 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         activity.runOnUiThread {
             if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
 
-            val themeId = activity.resources.getIdentifier("AppTheme.Dialog.Alert", "style", activity.packageName)
-            val builder = if (themeId != 0) AlertDialog.Builder(activity, themeId) else AlertDialog.Builder(activity)
+            val root = activity.findViewById<ViewGroup>(android.R.id.content)
+                ?: activity.window?.decorView as? ViewGroup
+                ?: return@runOnUiThread
+            root.findViewWithTag<View>(MANUAL_PROMPT_TAG)?.let(root::removeView)
 
-            val message = buildString {
-                append("检测到")
-                append(categoryLabel(segment))
-                append("片段，是否跳过？\n")
-                append(formatSeconds(segment.segment[0]))
-                append(" - ")
-                append(formatSeconds(segment.segment[1]))
+            val prompt = LinearLayout(activity).apply {
+                tag = MANUAL_PROMPT_TAG
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                elevation = dp(12).toFloat()
+                setPadding(dp(12), dp(8), dp(8), dp(8))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(22).toFloat()
+                    setColor(MANUAL_PROMPT_BACKGROUND)
+                }
+                setOnClickListener {
+                    removeFromParent(this)
+                    seekPlayerTo(position, segment, controller)
+                }
             }
 
-            val dialog = builder
-                .setTitle("空降助手")
-                .setMessage(message)
-                .setPositiveButton("跳过") { _, _ ->
-                    seekPlayerTo(position, segment)
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
+            val textColumn = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(
+                    TextView(activity).apply {
+                        text = manualPromptTitle(segment)
+                        textSize = 13f
+                        maxWidth = dp(190)
+                        maxLines = 1
+                        setTextColor(Color.WHITE)
+                    },
+                )
+                addView(
+                    TextView(activity).apply {
+                        text = manualPromptTimeRange(segment)
+                        textSize = 11f
+                        maxWidth = dp(190)
+                        maxLines = 1
+                        setTextColor(MANUAL_PROMPT_SECONDARY_TEXT)
+                    },
+                )
+            }
 
-            dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+            val actionView = TextView(activity).apply {
+                text = "跳过"
+                textSize = 13f
+                gravity = Gravity.CENTER
+                minWidth = dp(54)
+                minHeight = dp(32)
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(16).toFloat()
+                    setColor(MANUAL_PROMPT_ACTION_BACKGROUND)
+                }
+                setOnClickListener {
+                    removeFromParent(prompt)
+                    seekPlayerTo(position, segment, controller)
+                }
+            }
+
+            prompt.addView(
+                textColumn,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = dp(12)
+                },
+            )
+            prompt.addView(actionView)
+
+            val params = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            ).apply {
+                bottomMargin = dp(manualPromptBottomMarginDp(controller))
+                marginStart = dp(16)
+                marginEnd = dp(16)
+            }
+            root.addView(prompt, params)
+            mainHandler.postDelayed({
+                removeFromParent(prompt)
+            }, MANUAL_PROMPT_DURATION_MS)
+        }
+    }
+
+    private fun removeFromParent(view: View) {
+        (view.parent as? ViewGroup)?.removeView(view)
+    }
+
+    private fun dp(value: Int): Int =
+        (value * env.hostContext.resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun manualPromptBottomMarginDp(controller: Any?): Int {
+        val controllerName = controller?.javaClass?.name.orEmpty()
+        return if (".video.story." in controllerName) {
+            STORY_MANUAL_PROMPT_BOTTOM_MARGIN_DP
+        } else {
+            MANUAL_PROMPT_BOTTOM_MARGIN_DP
         }
     }
 
@@ -572,18 +691,17 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             original.javaClass.takeIf { it.isInterface }?.let(::add)
         }.toTypedArray()
 
-    private fun loadedCategorySuffix(segments: List<BilibiliSponsorBlock.Segment>): String {
-        val labels = segments.map(::categoryLabel).distinct()
-        if (labels.isEmpty()) return ""
-        val preview = labels.take(3).joinToString("、")
-        return if (labels.size > 3) "（$preview 等）" else "（$preview）"
-    }
-
     private fun skipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
         "已跳过${categoryLabel(segment)}"
 
     private fun manualSkipToastMessage(segment: BilibiliSponsorBlock.Segment): String =
-        "即将跳过${categoryLabel(segment)}"
+        "检测到${categoryLabel(segment)}片段"
+
+    private fun manualPromptTitle(segment: BilibiliSponsorBlock.Segment): String =
+        "检测到${categoryLabel(segment)}片段"
+
+    private fun manualPromptTimeRange(segment: BilibiliSponsorBlock.Segment): String =
+        "${formatSeconds(segment.segment[0])} - ${formatSeconds(segment.segment[1])}"
 
     private fun categoryLabel(segment: BilibiliSponsorBlock.Segment): String =
         ModuleSettings.skipVideoAdCategories
@@ -610,11 +728,21 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private const val CARD_PLAYER_CONTEXT_INTERFACE = "tv.danmaku.video.bilicardplayer.ICardPlayerContext"
         private const val CHECK_INTERVAL_MS = 250L
         private const val PRE_SKIP_THRESHOLD_MS = 300L
+        private const val POST_SKIP_PADDING_MS = 500L
+        private const val AUTO_SKIP_REARM_THRESHOLD_MS = 1200L
         private const val SKIP_COOLDOWN_MS = 1000L
+        private const val MANUAL_PROMPT_DURATION_MS = 7000L
+        private const val MANUAL_PROMPT_BOTTOM_MARGIN_DP = 92
+        private const val STORY_MANUAL_PROMPT_BOTTOM_MARGIN_DP = 216
+        private const val MANUAL_PROMPT_TAG = "bbzq_skip_video_ad_manual_prompt"
         private val PLAY_VIEW_METHOD_NAMES = setOf("executePlayViewUnite", "playViewUnite")
         private val STATE_METHOD_NAMES = setOf("getState")
         private val CARD_STATE_METHOD_NAMES = setOf("getPlayerState", "getState")
+        private val DYNAMIC_STATE_METHOD_NAMES = setOf("getState", "getPlayerState")
         private val RESET_PLAYER_STATES = setOf(2)
+        private val MANUAL_PROMPT_BACKGROUND = Color.argb(230, 18, 18, 18)
+        private val MANUAL_PROMPT_ACTION_BACKGROUND = Color.rgb(251, 114, 153)
+        private val MANUAL_PROMPT_SECONDARY_TEXT = Color.argb(190, 255, 255, 255)
 
         private val PLAYER_CORE_SERVICE_CANDIDATES = arrayOf(
             "tv.danmaku.biliplayerv2.service.PlayerCoreService",

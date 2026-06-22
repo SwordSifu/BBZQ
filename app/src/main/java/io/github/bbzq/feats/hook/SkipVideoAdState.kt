@@ -5,6 +5,7 @@ import io.github.bbzq.feats.BilibiliSponsorBlock
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 object SkipVideoAdState {
     @Volatile private var activeVideoKey = ""
@@ -16,6 +17,7 @@ object SkipVideoAdState {
 
     private val controllerVideoKeys = Collections.synchronizedMap(WeakHashMap<Any, String>())
     private val viewVideoKeys = Collections.synchronizedMap(WeakHashMap<View, String>())
+    private val controllerObservers = CopyOnWriteArrayList<(Any) -> Unit>()
 
     fun resolveVideoIdentity(bvid: String?, cid: Any?, aid: Any? = null): VideoIdentity? {
         val normalizedCid = cid.asLong()?.takeIf { it > 0L }?.toString() ?: return null
@@ -63,6 +65,13 @@ object SkipVideoAdState {
         synchronized(controllerVideoKeys) {
             controllerVideoKeys[controller] = key
         }
+        controllerObservers.forEach { observer ->
+            observer(controller)
+        }
+    }
+
+    fun observeControllers(observer: (Any) -> Unit) {
+        controllerObservers.add(observer)
     }
 
     fun bindView(view: View?, key: String) {
@@ -104,7 +113,6 @@ object SkipVideoAdState {
         log: (String, Throwable?) -> Unit,
     ) {
         if (enabledCategories.isEmpty()) return
-        if (markerStates[identity.key]?.segments?.isNotEmpty() == true) return
 
         val requestKey = buildRequestKey(identity, enabledCategories)
         if (requestKey in loadedSegmentRequests) return
