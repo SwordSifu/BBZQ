@@ -17,6 +17,7 @@ data class BiliHookSymbols(
     val scanErrors: List<String>,
     val account: AccountSymbols? = null,
     val settings: SettingsSymbols? = null,
+    val blockUpdate: BlockUpdateSymbols? = null,
     val mineProfile: MineProfileSymbols? = null,
     val downloadThread: DownloadThreadSymbols? = null,
     val homeRecommendAutoRefresh: HomeRecommendAutoRefreshSymbols? = null,
@@ -46,6 +47,7 @@ data class BiliHookSymbols(
         .put("scanErrors", scanErrors.toJsonArray())
         .putOpt("account", account?.toJson())
         .putOpt("settings", settings?.toJson())
+        .putOpt("blockUpdate", blockUpdate?.toJson())
         .putOpt("mineProfile", mineProfile?.toJson())
         .putOpt("downloadThread", downloadThread?.toJson())
         .putOpt("homeRecommendAutoRefresh", homeRecommendAutoRefresh?.toJson())
@@ -63,7 +65,7 @@ data class BiliHookSymbols(
         .putOpt("chronosPromotion", chronosPromotion?.toJson())
 
     companion object {
-        const val CACHE_SCHEMA_VERSION = 4
+        const val CACHE_SCHEMA_VERSION = 5
 
         fun fromJson(raw: String?): BiliHookSymbols? {
             if (raw.isNullOrBlank()) return null
@@ -77,6 +79,7 @@ data class BiliHookSymbols(
                     scanErrors = obj.optJSONArray("scanErrors").toStringList(),
                     account = obj.optJSONObject("account")?.let(AccountSymbols::fromJson),
                     settings = obj.optJSONObject("settings")?.let(SettingsSymbols::fromJson),
+                    blockUpdate = obj.optJSONObject("blockUpdate")?.let(BlockUpdateSymbols::fromJson),
                     mineProfile = obj.optJSONObject("mineProfile")?.let(MineProfileSymbols::fromJson),
                     downloadThread = obj.optJSONObject("downloadThread")?.let(DownloadThreadSymbols::fromJson),
                     homeRecommendAutoRefresh = obj.optJSONObject("homeRecommendAutoRefresh")
@@ -223,6 +226,32 @@ data class SettingsSymbols(
         )
     }
 }
+
+data class BlockUpdateSymbols(
+    val checkMethod: MethodDescriptor,
+    val evidence: String,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("checkMethod", checkMethod.toJson())
+        .put("evidence", evidence)
+
+    fun restore(classLoader: ClassLoader): RestoredBlockUpdateSymbols? {
+        val owner = classLoader.loadClassOrNull(checkMethod.declaringClassName) ?: return null
+        val method = checkMethod.restore(owner) ?: return null
+        return RestoredBlockUpdateSymbols(method)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): BlockUpdateSymbols = BlockUpdateSymbols(
+            checkMethod = MethodDescriptor.fromJson(obj.getJSONObject("checkMethod")),
+            evidence = obj.optString("evidence", "-"),
+        )
+    }
+}
+
+data class RestoredBlockUpdateSymbols(
+    val checkMethod: Method,
+)
 
 data class MineProfileSymbols(
     val fragmentClassName: String,

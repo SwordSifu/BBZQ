@@ -124,6 +124,8 @@
     <string name="startup_skip_splash_summary">拦截开屏广告请求，缩短启动等待时间。</string>
     <string name="startup_block_teenagers_title">关闭青少年模式弹窗</string>
     <string name="startup_block_teenagers_summary">检测并自动关闭青少年模式提醒弹窗。</string>
+    <string name="block_update_title">禁止 App 检查更新</string>
+    <string name="block_update_summary">拦截应用内更新检查，避免弹出版本更新提示。</string>
     <string name="home_recommend_ad_title">移除首页推荐广告</string>
     <string name="home_recommend_ad_summary">过滤首页推荐流中的大横幅、信息流广告和广告推广视频。</string>
     <string name="home_recommend_picture_title">移除首页推荐图文</string>

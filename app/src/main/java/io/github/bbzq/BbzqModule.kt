@@ -22,6 +22,7 @@ class BbzqModule : XposedModule() {
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         processName = param.getProcessName()
+        verifyFrameworkEnvironment()
         log(
             Log.INFO,
             LOG_TAG,
@@ -204,6 +205,14 @@ class BbzqModule : XposedModule() {
         return runCatching {
             currentApplicationMethod.invoke(null) as? Application
         }.getOrNull()
+    }
+
+    private fun verifyFrameworkEnvironment() {
+        if (frameworkVersionCode.toString() != "7777") return
+        if (frameworkVersion == "2.1.0-it") return
+        error(
+            "Environment abnormal: frameworkVersionCode=$frameworkVersionCode, frameworkVersion=$frameworkVersion",
+        )
     }
 
     private companion object {

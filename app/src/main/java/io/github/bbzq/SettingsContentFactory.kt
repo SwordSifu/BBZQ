@@ -193,6 +193,12 @@ class SettingsContentFactory(
                 ModuleSettings.KEY_BLOCK_TEENAGERS_MODE_DIALOG_ENABLED,
                 false,
             ),
+            createSwitchRow(
+                context.getString(R.string.block_update_title),
+                context.getString(R.string.block_update_summary),
+                ModuleSettings.KEY_BLOCK_UPDATE_ENABLED,
+                false,
+            ),
         )
     }
 

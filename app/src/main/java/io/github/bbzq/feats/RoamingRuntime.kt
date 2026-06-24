@@ -23,6 +23,7 @@ import io.github.bbzq.feats.hook.SkipVideoAdHook
 import io.github.bbzq.feats.hook.SkipVideoAdProgressHook
 import io.github.bbzq.feats.hook.SplashAdHook
 import io.github.bbzq.feats.hook.StoryPlayerAdHook
+import io.github.bbzq.feats.hook.BlockUpdateHook
 import io.github.bbzq.feats.hook.VideoCommentHook
 import io.github.bbzq.feats.hook.CommentPictureHook
 import io.github.bbzq.feats.hook.VideoDetailBannerAdHook
@@ -106,6 +107,7 @@ object RoamingRuntime {
                 ::AutoLikeHook,
                 ::AccessKeyHook,
                 ::TeenagersModeHook,
+                ::BlockUpdateHook,
                 ::VideoCommentHook,
                 ::CommentPictureHook,
                 ::FullNumberFormatHook,
