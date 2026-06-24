@@ -131,6 +131,96 @@ object ModuleSettings {
     @Volatile
     private var knownHomeRecommendItemsCache: Set<String>? = null
 
+    enum class ExportableValueType {
+        BOOLEAN,
+        INT,
+        STRING,
+        STRING_SET,
+    }
+
+    data class ExportableConfigSpec(
+        val key: String,
+        val type: ExportableValueType,
+        val read: (SharedPreferences) -> Any?,
+    )
+
+    val exportableSwitchSpecs = listOf(
+        ExportableConfigSpec(KEY_MINI_PROGRAM_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINI_PROGRAM_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_SHARE_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SHARE_ENABLED, false) },
+        ExportableConfigSpec(KEY_SKIP_REWARD_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_REWARD_AD_ENABLED, false) },
+        ExportableConfigSpec(KEY_BLOCK_TEENAGERS_MODE_DIALOG_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_TEENAGERS_MODE_DIALOG_ENABLED, false) },
+        ExportableConfigSpec(KEY_SKIP_SPLASH_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_SPLASH_AD_ENABLED, true) },
+        ExportableConfigSpec(KEY_SKIP_VIDEO_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_VIDEO_AD_ENABLED, false) },
+        ExportableConfigSpec(KEY_SKIP_VIDEO_AD_AUTO_LIKE_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_VIDEO_AD_AUTO_LIKE_ENABLED, false) },
+        ExportableConfigSpec(KEY_SKIP_VIDEO_AD_SETTINGS_VISIBLE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_VIDEO_AD_SETTINGS_VISIBLE, false) },
+        ExportableConfigSpec(KEY_ACCESS_KEY_SETTINGS_VISIBLE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_ACCESS_KEY_SETTINGS_VISIBLE, false) },
+        ExportableConfigSpec(KEY_TRY_FREE_QUALITY_SETTINGS_VISIBLE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_TRY_FREE_QUALITY_SETTINGS_VISIBLE, false) },
+        ExportableConfigSpec(KEY_BLOCK_VIDEO_DETAIL_BANNER_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_VIDEO_DETAIL_BANNER_AD_ENABLED, false) },
+        ExportableConfigSpec(KEY_BLOCK_CHRONOS_PROMOTION_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_CHRONOS_PROMOTION_ENABLED, false) },
+        ExportableConfigSpec(KEY_UNLOCK_VIDEO_FEATURES_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_UNLOCK_VIDEO_FEATURES_ENABLED, false) },
+        ExportableConfigSpec(KEY_AUTO_LIKE_VIDEO_DETAIL_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_AUTO_LIKE_VIDEO_DETAIL_ENABLED, false) },
+        ExportableConfigSpec(KEY_FIX_LIVE_QUALITY_URL_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_FIX_LIVE_QUALITY_URL_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_HOME_RECOMMEND_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_HOME_RECOMMEND_AD_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_HOME_RECOMMEND_PICTURE_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_HOME_RECOMMEND_PICTURE_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_HOME_RECOMMEND_GAME_PROMO_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_HOME_RECOMMEND_GAME_PROMO_ENABLED, false) },
+        ExportableConfigSpec(KEY_HOME_RECOMMEND_VERTICAL_AV_DETAIL_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HOME_RECOMMEND_VERTICAL_AV_DETAIL_ENABLED, false) },
+        ExportableConfigSpec(KEY_BLOCK_HOME_RECOMMEND_AUTO_REFRESH_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_HOME_RECOMMEND_AUTO_REFRESH_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED, false) },
+        ExportableConfigSpec(KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_STORY_VIDEO_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_STORY_VIDEO_AD_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_DOWNLOAD_THREAD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_DOWNLOAD_THREAD_ENABLED, false) },
+        ExportableConfigSpec(KEY_SKIP_MINI_GAME_REWARD_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_MINI_GAME_REWARD_AD_ENABLED, true) },
+        ExportableConfigSpec(KEY_BLOCK_LIVE_RESERVATION_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_LIVE_RESERVATION_ENABLED, false) },
+        ExportableConfigSpec(KEY_BLOCK_LIVE_ROOM_QOE_POPUP_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_LIVE_ROOM_QOE_POPUP_ENABLED, false) },
+        ExportableConfigSpec(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, false) },
+        ExportableConfigSpec(KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_BOTTOM_BAR_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_BOTTOM_BAR_ENABLED, false) },
+        ExportableConfigSpec(KEY_HIDE_HOME_TOP_BAR_PROMOTION_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_HOME_TOP_BAR_PROMOTION_ENABLED, false) },
+        ExportableConfigSpec(KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED, false) },
+        ExportableConfigSpec(KEY_FULL_NUMBER_FORMAT_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_FULL_NUMBER_FORMAT_ENABLED, false) },
+        ExportableConfigSpec(KEY_UNLOCK_COMMENT_GIF_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_UNLOCK_COMMENT_GIF_ENABLED, false) },
+        ExportableConfigSpec(KEY_HIDE_DESKTOP_ICON, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_DESKTOP_ICON, false) },
+        ExportableConfigSpec(KEY_COMMENT_DISABLE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_DISABLE, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_QUICK_REPLY, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_QUICK_REPLY, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_VOTE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_VOTE, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_FOLLOW, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_FOLLOW, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_SEARCH, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_SEARCH, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_EMPTY_PAGE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_EMPTY_PAGE, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_QOE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_QOE, false) },
+        ExportableConfigSpec(KEY_COMMENT_NO_OPERATION, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_OPERATION, false) },
+        ExportableConfigSpec(KEY_COMMENT_PICTURE_VIEW, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_PICTURE_VIEW, false) },
+        ExportableConfigSpec(KEY_MINE_REMOVE_VIP, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINE_REMOVE_VIP, false) },
+        ExportableConfigSpec(KEY_MINE_KEEP_VIP_SPACE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINE_KEEP_VIP_SPACE, false) },
+    )
+
+    val exportableManualSpecs = buildList<ExportableConfigSpec> {
+        add(ExportableConfigSpec(KEY_HOME_RECOMMEND_TITLE_KEYWORDS, ExportableValueType.STRING) { it.getString(KEY_HOME_RECOMMEND_TITLE_KEYWORDS, "").orEmpty() })
+        add(ExportableConfigSpec(KEY_CUSTOM_DOWNLOAD_CONCURRENCY, ExportableValueType.INT) { prefs ->
+            prefs.getInt(KEY_CUSTOM_DOWNLOAD_CONCURRENCY, 1).coerceIn(1, 12)
+        })
+        add(ExportableConfigSpec(KEY_PURIFY_STORY_VIDEO_AD_TAGS, ExportableValueType.STRING_SET) {
+            it.getStringSet(KEY_PURIFY_STORY_VIDEO_AD_TAGS, defaultStoryVideoAdTags)?.toSet() ?: defaultStoryVideoAdTags
+        })
+        add(ExportableConfigSpec(KEY_HIDDEN_HOME_RECOMMEND_ITEMS, ExportableValueType.STRING_SET) {
+            it.getStringSet(KEY_HIDDEN_HOME_RECOMMEND_ITEMS, emptySet<String>())?.toSet() ?: emptySet<String>()
+        })
+        add(ExportableConfigSpec(KEY_HIDDEN_HOME_COMPONENTS, ExportableValueType.STRING_SET) {
+            it.getStringSet(KEY_HIDDEN_HOME_COMPONENTS, emptySet<String>())?.toSet() ?: emptySet<String>()
+        })
+        add(ExportableConfigSpec(KEY_HIDDEN_BOTTOM_BAR_ITEMS, ExportableValueType.STRING_SET) {
+            it.getStringSet(KEY_HIDDEN_BOTTOM_BAR_ITEMS, emptySet<String>())?.toSet() ?: emptySet<String>()
+        })
+        skipVideoAdCategories.forEach { category ->
+            add(ExportableConfigSpec("$KEY_SKIP_VIDEO_AD_MODE_PREFIX${category.key}", ExportableValueType.INT) { prefs ->
+                prefs.getInt(
+                    "$KEY_SKIP_VIDEO_AD_MODE_PREFIX${category.key}",
+                    defaultSkipVideoAdModes[category.key]?.value ?: SkipVideoAdMode.IGNORE.value,
+                )
+            })
+        }
+    }
+
     fun isSkipSplashAdEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_SPLASH_AD_ENABLED, true)
 

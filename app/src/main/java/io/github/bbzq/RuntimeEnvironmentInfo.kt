@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 object RuntimeEnvironmentInfo {
@@ -56,6 +58,29 @@ object RuntimeEnvironmentInfo {
             .put("processName", readRuntimeString(prefs, ModuleSettings.KEY_RUNTIME_PROCESS_NAME))
             .put("lastRuntimeUpdateTime", readRuntimeString(prefs, ModuleSettings.KEY_RUNTIME_LAST_UPDATE_TIME))
             .toString(2)
+    }
+
+    fun devicesText(context: Context, prefs: SharedPreferences, exportedAtMillis: Long = System.currentTimeMillis()): String {
+        val host = resolveHostVersion(context, prefs)
+        val module = moduleVersion(context)
+        return buildString {
+            appendLine("exportedAt=" + SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(exportedAtMillis)))
+            appendLine("deviceBrand=" + Build.BRAND)
+            appendLine("deviceManufacturer=" + Build.MANUFACTURER)
+            appendLine("deviceModel=" + Build.MODEL)
+            appendLine("deviceName=" + Build.DEVICE)
+            appendLine("productName=" + Build.PRODUCT)
+            appendLine("androidRelease=" + Build.VERSION.RELEASE)
+            appendLine("androidSdk=" + Build.VERSION.SDK_INT)
+            appendLine("securityPatch=" + (Build.VERSION.SECURITY_PATCH ?: UNKNOWN))
+            appendLine("hostPackage=" + host.packageName)
+            appendLine("hostVersion=" + host.displayName)
+            appendLine("hostSourceKind=" + resolveHostSourceKind(context, prefs, host.packageName))
+            appendLine("modulePackage=" + context.packageName)
+            appendLine("moduleVersion=" + module.displayName)
+            appendLine("runtimeSnapshot=")
+            appendLine(runtimeEnvironmentJson(context, prefs))
+        }
     }
 
     fun runtimeSnapshotBundle(

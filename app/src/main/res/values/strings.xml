@@ -181,8 +181,12 @@
 
     <!-- 關於頁 -->
     <string name="about_version_title">版本</string>
+    <string name="about_export_config_title">导出配置</string>
+    <string name="about_export_config_summary">以 ZIP 打包导出功能开关与手动配置，不包含数据或账户内容。</string>
+    <string name="about_import_config_title">导入配置</string>
+    <string name="about_import_config_summary">从 ZIP 还原功能开关与手动配置，不影响其他数据。</string>
     <string name="about_hide_desktop_icon_title">隐藏桌面图标</string>
-    <string name="about_hide_desktop_icon_summary">隐藏后可通过B站内设置打开。(须在LSPosed中关闭“强制显示桌面图标”)</string>
+    <string name="about_hide_desktop_icon_summary">隐藏后可通过B站内设置打开。(须在LSPosed中关闭 “强制显示桌面图标” )</string>
     <string name="about_hidden_features_title">隐藏功能</string>
     <string name="about_hidden_features_summary">%1$s 隐藏功能已显示。</string>
     <string name="about_skip_video_ad_switch_title">空降助手功能开关</string>
@@ -206,6 +210,12 @@
     <!-- 對話框 / Toast -->
     <string name="version_hidden_entry_toast">已显示隐藏入口</string>
     <string name="settings_done">完成</string>
+    <string name="config_export_success">已导出 %1$d 个功能开关和 %2$d 个手动配置。</string>
+    <string name="config_export_failed">导出失败：%1$s</string>
+    <string name="config_import_success">已导入 %1$d 个功能开关、%2$d 个手动配置，略过 %3$d 个其他内容。</string>
+    <string name="config_import_failed">导入失败：%1$s</string>
+    <string name="config_import_confirm_title">确定导入吗</string>
+    <string name="config_import_confirm_message">这会覆盖目前的功能开关和手动配置，但其他数据不会变动，是否继续？</string>
     <string name="access_key_error_title">获取失败</string>
     <string name="access_key_error_message">尚未获取到 AccessKey。请确保：\n1. 已在 B 站登录账号\n2. 已在 B 站中正常使用（刷几个视频）\n3. 如果还是没有，请清除应用缓存重试或反馈 Issue</string>
     <string name="access_key_title">当前 AccessKey</string>
@@ -220,7 +230,7 @@
     <string name="dialog_save">保存</string>
     <string name="list_separator">、</string>
     <string name="free_copy_title">自由复制</string>
-    <string name="free_copy_original_button">复制原始内容</string>
+    <string name="free_copy_original_button">复制选择内容</string>
 
     <string name="section_comment_purify">视频评论区</string>
     <string name="comment_disable_title">完全隐藏评论区</string>

@@ -34,6 +34,8 @@ class SettingsContentFactory(
     private val prefs: SharedPreferences,
     private val page: String,
     private val openPage: (String) -> Unit,
+    private val onExportClick: () -> Unit,
+    private val onImportClick: () -> Unit,
 ) {
     private val tagCheckBoxes = mutableMapOf<String, CheckBox>()
     private val bottomBarItemCheckBoxes = mutableMapOf<String, CheckBox>()
@@ -542,6 +544,18 @@ class SettingsContentFactory(
             RuntimeEnvironmentInfo.versionSummary(context, prefs),
         ) {
             handleVersionRowClick()
+        }
+        rows += createClickableInfoRow(
+            context.getString(R.string.about_export_config_title),
+            context.getString(R.string.about_export_config_summary),
+        ) {
+            onExportClick()
+        }
+        rows += createClickableInfoRow(
+            context.getString(R.string.about_import_config_title),
+            context.getString(R.string.about_import_config_summary),
+        ) {
+            onImportClick()
         }
         rows += createSymbolCacheRefreshRow()
         return rows

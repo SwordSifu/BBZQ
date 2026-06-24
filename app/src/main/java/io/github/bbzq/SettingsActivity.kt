@@ -1,8 +1,10 @@
-﻿package io.github.bbzq
+package io.github.bbzq
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -11,12 +13,19 @@ import android.view.WindowInsets
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class SettingsActivity : Activity() {
     private val prefs by lazy {
         val base = getSharedPreferences(ModuleSettings.PREFS_NAME, MODE_PRIVATE)
         ReadableModulePreferences(this, base)
     }
+
+    private var pendingImportArchive: ByteArray? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,6 +45,8 @@ class SettingsActivity : Activity() {
                     page = targetPage,
                 )
             },
+            onExportClick = { launchExportConfig() },
+            onImportClick = { launchImportConfig() },
         ).createScrollView()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -62,6 +73,17 @@ class SettingsActivity : Activity() {
     }
 
     @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK) return
+
+        when (requestCode) {
+            REQUEST_EXPORT_CONFIG -> data?.data?.let(::doExport)
+            REQUEST_IMPORT_CONFIG -> data?.data?.let(::loadImportArchive)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         val page = intent.getStringExtra(EXTRA_PAGE) ?: PAGE_ROOT
         if (page == PAGE_HIDDEN_FEATURES) {
@@ -73,6 +95,139 @@ class SettingsActivity : Activity() {
             return
         }
         finish()
+    }
+
+    private fun launchExportConfig() {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+            putExtra(Intent.EXTRA_TITLE, buildExportFileName())
+        }
+        runCatching {
+            startActivityForResult(intent, REQUEST_EXPORT_CONFIG)
+        }.onFailure { throwable ->
+            Toast.makeText(
+                this,
+                getString(R.string.config_export_failed, throwable.message ?: "無法開啟檔案選擇器"),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun launchImportConfig() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf(
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream",
+                ),
+            )
+        }
+        runCatching {
+            startActivityForResult(intent, REQUEST_IMPORT_CONFIG)
+        }.onFailure { throwable ->
+            Toast.makeText(
+                this,
+                getString(R.string.config_import_failed, throwable.message ?: "無法開啟檔案選擇器"),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun doExport(uri: Uri) {
+        val packageInfo = ConfigPorter.exportToZip(this, prefs)
+        runCatching {
+            contentResolver.openOutputStream(uri, "w")?.use { output ->
+                output.write(packageInfo.bytes)
+                output.flush()
+            } ?: throw IOException("無法開啟匯出檔案")
+        }.onSuccess {
+            Toast.makeText(
+                this,
+                getString(
+                    R.string.config_export_success,
+                    packageInfo.switchCount,
+                    packageInfo.manualCount,
+                ),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }.onFailure { throwable ->
+            Toast.makeText(
+                this,
+                getString(R.string.config_export_failed, throwable.message ?: "未知錯誤"),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun loadImportArchive(uri: Uri) {
+        runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                input.readBytes()
+            } ?: throw IOException("無法讀取匯入檔案")
+        }.onSuccess { bytes ->
+            pendingImportArchive = bytes
+            showImportConfirmDialog()
+        }.onFailure { throwable ->
+            Toast.makeText(
+                this,
+                getString(R.string.config_import_failed, throwable.message ?: "未知錯誤"),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun showImportConfirmDialog() {
+        val archive = pendingImportArchive ?: return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.config_import_confirm_title)
+            .setMessage(R.string.config_import_confirm_message)
+            .setNegativeButton(R.string.dialog_cancel) { _, _ ->
+                pendingImportArchive = null
+            }
+            .setPositiveButton(R.string.skip_mode_confirm) { _, _ ->
+                performImport(archive)
+            }
+            .setOnCancelListener {
+                pendingImportArchive = null
+            }
+            .show()
+    }
+
+    private fun performImport(archive: ByteArray) {
+        pendingImportArchive = null
+        when (val result = ConfigPorter.importFromZip(archive, prefs)) {
+            is ConfigPorter.ImportResult.Success -> {
+                Toast.makeText(
+                    this,
+                    getString(
+                        R.string.config_import_success,
+                        result.switchCount,
+                        result.manualCount,
+                        result.skippedCount,
+                    ),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                recreate()
+            }
+
+            is ConfigPorter.ImportResult.Failure -> {
+                Toast.makeText(
+                    this,
+                    getString(R.string.config_import_failed, result.reason),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
+
+    private fun buildExportFileName(): String {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        return "bbzq_config_$timestamp.zip"
     }
 
     private fun createToolbar(page: String): LinearLayout {
@@ -151,5 +306,7 @@ class SettingsActivity : Activity() {
         const val PAGE_SKIP_VIDEO_AD_SWITCH = "skip_video_ad_switch"
         const val PAGE_SKIP_VIDEO_AD_CATEGORY = "skip_video_ad_category"
         const val PAGE_HIDDEN_FEATURES = "hidden_features"
+        private const val REQUEST_EXPORT_CONFIG = 0x5001
+        private const val REQUEST_IMPORT_CONFIG = 0x5002
     }
 }
