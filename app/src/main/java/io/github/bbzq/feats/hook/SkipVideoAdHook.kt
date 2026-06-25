@@ -44,7 +44,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private var playerCoreServiceRef: WeakReference<Any>? = null
     private var cardPlayerContextRef: WeakReference<Any>? = null
     private val reflectionFailureLogs = ConcurrentHashMap.newKeySet<String>()
-    private val discoveredControllerClasses = ConcurrentHashMap.newKeySet<String>()
     private val playerCoreService: Any?
         get() = playerCoreServiceRef?.get()
     private val cardPlayerContext: Any?
@@ -66,7 +65,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             return
         }
         ensureActivityTracking()
-        observeBoundControllers()
         val count = installHookGroup("playView") { hookPlayViewUnite(symbols) } +
             installHookGroup("playerCore") { hookPlayerCoreService(symbols) } +
             installHookGroup("cardPlayer") { hookCardPlayerContext(symbols) }
@@ -81,27 +79,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             log("SkipVideoAd $label hook group failed", it)
             0
         }
-
-    private fun observeBoundControllers() {
-        SkipVideoAdState.observeControllers { controller ->
-            runCatching {
-                hookDiscoveredController(controller)
-            }.onFailure {
-                log("SkipVideoAd discovered controller hook failed at ${controller.javaClass.name}", it)
-            }
-        }
-    }
-
-    private fun hookDiscoveredController(controller: Any) {
-        val type = controller.javaClass
-        if (!discoveredControllerClasses.add(type.name)) return
-
-        val count = hookCurrentPosition(type, DYNAMIC_STATE_METHOD_NAMES) +
-            hookPlayerState(type, DYNAMIC_STATE_METHOD_NAMES)
-        if (count > 0) {
-            log("SkipVideoAd hooked discovered controller ${type.name}, methods=$count")
-        }
-    }
 
     private fun ensureActivityTracking() {
         val application = env.hostContext as? Application ?: return
@@ -155,12 +132,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             }
         }
         return count
-    }
-
-    private fun Class<*>.isPlayViewRequestType(): Boolean {
-        val methods = safeAllMethods("play view request")
-        return methods.any { it.name == "getBvid" && it.parameterCount == 0 } &&
-            methods.any { it.name == "getVod" && it.parameterCount == 0 }
     }
 
     private fun wrapResponseHandlerIfNeeded(handler: Any): Any {
@@ -236,58 +207,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             hookPlayerStateMethods(symbols.cardStateMethods, CARD_STATE_METHOD_NAMES)
     }
 
-    private fun hookCurrentPosition(type: Class<*>, stateMethodNames: Set<String>): Int {
-        val methods = type.safeAllMethods("current position hook")
-            .filter {
-                it.name == "getCurrentPosition" &&
-                    it.parameterCount == 0 &&
-                    it.returnType.isNumericType()
-            }
-            .distinctBy(Method::toGenericString)
-            .toList()
-
-        var count = 0
-        methods.forEach { method ->
-            runCatching {
-                env.hookAfter(method) { param ->
-                    runCatching {
-                        if (!isEnabled()) return@runCatching
-                        val controller = param.thisObject ?: return@runCatching
-                        val key = rememberPlayerController(controller, stateMethodNames)
-                        if (duration <= 0) {
-                            duration = resolveDuration(controller)
-                            if (duration > 0) {
-                                SkipVideoAdState.updateDuration(key, duration)
-                            }
-                        }
-                        fetchSegmentsIfNeeded()
-                        val position = param.result.asLong() ?: return@runCatching
-                        val state = resolveState(controller, stateMethodNames)
-                        if (state in RESET_PLAYER_STATES) {
-                            resetPlaybackState(fetchImmediately = false)
-                            return@runCatching
-                        }
-                        val now = System.currentTimeMillis()
-                        if (now - lastSeekTime > waitTime) {
-                            lastSeekTime = now
-                            waitTime = if (seekTo(position, key, controller)) {
-                                SKIP_COOLDOWN_MS
-                            } else {
-                                CHECK_INTERVAL_MS
-                            }
-                        }
-                    }.onFailure {
-                        log("SkipVideoAd currentPosition callback failed at ${method.declaringClass.name}.${method.name}", it)
-                    }
-                }
-                count++
-            }.onFailure {
-                log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
-            }
-        }
-        return count
-    }
-
     private fun hookCurrentPositionMethods(methods: List<Method>, stateMethodNames: Set<String>): Int {
         var count = 0
         methods.forEach { method ->
@@ -321,46 +240,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                         }
                     }.onFailure {
                         log("SkipVideoAd currentPosition callback failed at ${method.declaringClass.name}.${method.name}", it)
-                    }
-                }
-                count++
-            }.onFailure {
-                log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
-            }
-        }
-        return count
-    }
-
-    private fun hookPlayerState(type: Class<*>, stateMethodNames: Set<String>): Int {
-        val methods = type.safeAllMethods("player state hook")
-            .filter {
-                it.name in stateMethodNames &&
-                    it.parameterCount == 0 &&
-                    it.returnType.isNumericType()
-            }
-            .distinctBy(Method::toGenericString)
-            .toList()
-
-        var count = 0
-        methods.forEach { method ->
-            runCatching {
-                env.hookAfter(method) { param ->
-                    runCatching {
-                        if (!isEnabled()) return@runCatching
-                        val controller = param.thisObject ?: return@runCatching
-                        val key = rememberPlayerController(controller, stateMethodNames)
-                        val state = param.result.asInt() ?: return@runCatching
-                        if (state in 3..5 && duration <= 0) {
-                            duration = resolveDuration(controller)
-                            if (duration > 0) {
-                                SkipVideoAdState.updateDuration(key, duration)
-                            }
-                        }
-                        if (state in RESET_PLAYER_STATES) {
-                            resetPlaybackState(fetchImmediately = true)
-                        }
-                    }.onFailure {
-                        log("SkipVideoAd playerState callback failed at ${method.declaringClass.name}.${method.name}", it)
                     }
                 }
                 count++
@@ -851,7 +730,6 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private const val MANUAL_PROMPT_TAG = "bbzq_skip_video_ad_manual_prompt"
         private val STATE_METHOD_NAMES = setOf("getState")
         private val CARD_STATE_METHOD_NAMES = setOf("getPlayerState", "getState")
-        private val DYNAMIC_STATE_METHOD_NAMES = setOf("getState", "getPlayerState")
         private val RESET_PLAYER_STATES = setOf(2)
         private val MANUAL_PROMPT_BACKGROUND = Color.argb(230, 18, 18, 18)
         private val MANUAL_PROMPT_ACTION_BACKGROUND = Color.rgb(251, 114, 153)

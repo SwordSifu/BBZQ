@@ -3,11 +3,9 @@ package io.github.bbzq.feats.hook
 import android.view.View
 import io.github.bbzq.ModuleSettings
 import io.github.bbzq.feats.BaseRoamingHook
-import io.github.bbzq.feats.from
 import io.github.bbzq.feats.callMethod
 import io.github.bbzq.feats.hookAfter
-import io.github.bbzq.feats.hookAfterMethod
-import io.github.bbzq.feats.hookAfterAllMethods
+import io.github.bbzq.feats.symbol.RestoredHomeComponentHideSymbols
 import java.lang.reflect.Method
 import java.util.Collections
 import java.util.WeakHashMap
@@ -19,26 +17,36 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
 
     override fun startHook() {
         if (env.processName != env.packageName) return
-        val fragmentClass = ANDROIDX_FRAGMENT.from(classLoader)
-        if (fragmentClass == null) {
-            log("startHook: HomeComponentHide missing androidx.fragment.app.Fragment")
+        val symbols = env.symbols?.homeComponentHide?.restore(classLoader)
+        if (symbols == null) {
+            log("startHook: HomeComponentHide skipped because symbols are unavailable")
             return
         }
 
         var count = 0
-        count += env.hookAfterAllMethods(fragmentClass, "onViewCreated") { param ->
-            processFragment(param.thisObject)
-        }
-        count += env.hookAfterMethod(fragmentClass, "onHiddenChanged", Boolean::class.javaPrimitiveType!!) { param ->
-            processFragment(param.thisObject)
-        }
-        count += hookHomeComponentCatalog()
+        count += hookFragmentLifecycle(symbols.fragmentLifecycleMethods)
+        count += hookHomeComponentCatalog(symbols)
 
         if (count == 0) {
             log("startHook: HomeComponentHide no hook point found")
         } else {
             log("startHook: HomeComponentHide methods=$count")
         }
+    }
+
+    private fun hookFragmentLifecycle(methods: List<Method>): Int {
+        var count = 0
+        methods.forEach { method ->
+            runCatching {
+                env.hookAfter(method) { param ->
+                    processFragment(param.thisObject)
+                }
+                count++
+            }.onFailure {
+                log("HomeComponentHide failed to hook ${method.declaringClass.name}.${method.name}", it)
+            }
+        }
+        return count
     }
 
     private fun processFragment(fragment: Any?) {
@@ -53,20 +61,25 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
         applyVisibility(root, className)
     }
 
-    private fun hookHomeComponentCatalog(): Int {
-        val symbols = env.symbols?.homeComponentHide?.restore(classLoader) ?: return 0
+    private fun hookHomeComponentCatalog(symbols: RestoredHomeComponentHideSymbols): Int {
         val catalogMethod = symbols.componentCatalogMethod ?: return 0
         val methods = symbols.baseHomeFragmentMethods
+        var count = 0
         methods.forEach { method ->
-            env.hookAfter(method) { param ->
-                runCatching {
-                    collectHomeComponentCatalog(param.thisObject, catalogMethod)
-                }.onFailure {
-                    log("HomeComponentHide component catalog hook failed at ${method.declaringClass.name}.${method.name}", it)
+            runCatching {
+                env.hookAfter(method) { param ->
+                    runCatching {
+                        collectHomeComponentCatalog(param.thisObject, catalogMethod)
+                    }.onFailure {
+                        log("HomeComponentHide component catalog callback failed at ${method.declaringClass.name}.${method.name}", it)
+                    }
                 }
+                count++
+            }.onFailure {
+                log("HomeComponentHide failed to hook ${method.declaringClass.name}.${method.name}", it)
             }
         }
-        return methods.size
+        return count
     }
 
     private fun collectHomeComponentCatalog(fragment: Any?, catalogMethod: Method) {
@@ -179,7 +192,6 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
     )
 
     private companion object {
-        private const val ANDROIDX_FRAGMENT = "androidx.fragment.app.Fragment"
         private val BASE_HOME_FRAGMENT_CLASSES = arrayOf(
             "tv.danmaku.bili.home.tab.page.BaseHomeFragment",
             "tv.danmaku.p9138bili.p9170home.p9173tab.p9174page.BaseHomeFragment",

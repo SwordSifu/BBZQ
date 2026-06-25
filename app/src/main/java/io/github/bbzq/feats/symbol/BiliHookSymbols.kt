@@ -39,6 +39,7 @@ data class BiliHookSymbols(
     val skipVideoAdProgress: SkipVideoAdProgressSymbols? = null,
     val skipVideoAdAutoLike: SkipVideoAdAutoLikeSymbols? = null,
     val chronosPromotion: ChronosPromotionSymbols? = null,
+    val fullNumberFormat: FullNumberFormatSymbols? = null,
 ) {
     fun isUsableWith(expectedFingerprint: String): Boolean =
         cacheSchemaVersion == CACHE_SCHEMA_VERSION &&
@@ -75,9 +76,10 @@ data class BiliHookSymbols(
         .putOpt("skipVideoAdProgress", skipVideoAdProgress?.toJson())
         .putOpt("skipVideoAdAutoLike", skipVideoAdAutoLike?.toJson())
         .putOpt("chronosPromotion", chronosPromotion?.toJson())
+        .putOpt("fullNumberFormat", fullNumberFormat?.toJson())
 
     companion object {
-        const val CACHE_SCHEMA_VERSION = 6
+        const val CACHE_SCHEMA_VERSION = 7
 
         fun fromJson(raw: String?): BiliHookSymbols? {
             if (raw.isNullOrBlank()) return null
@@ -117,6 +119,7 @@ data class BiliHookSymbols(
                     skipVideoAdAutoLike = obj.optJSONObject("skipVideoAdAutoLike")
                         ?.let(SkipVideoAdAutoLikeSymbols::fromJson),
                     chronosPromotion = obj.optJSONObject("chronosPromotion")?.let(ChronosPromotionSymbols::fromJson),
+                    fullNumberFormat = obj.optJSONObject("fullNumberFormat")?.let(FullNumberFormatSymbols::fromJson),
                 )
             }.getOrNull()
         }
@@ -124,7 +127,7 @@ data class BiliHookSymbols(
 }
 
 object DexKitRuleVersions {
-    const val CURRENT = 17
+    const val CURRENT = 18
 }
 
 data class HookPointStatus(
@@ -1158,19 +1161,24 @@ data class RestoredPegasusResponseGetItemsSymbols(
 )
 
 data class HomeComponentHideSymbols(
+    val fragmentLifecycleMethods: List<MethodDescriptor>,
     val baseHomeFragmentMethods: List<MethodDescriptor>,
     val componentCatalogMethod: MethodDescriptor? = null,
     val evidence: String,
 ) {
     fun toJson(): JSONObject = JSONObject()
+        .put("fragmentLifecycleMethods", fragmentLifecycleMethods.toJsonArray { it.toJson() })
         .put("baseHomeFragmentMethods", baseHomeFragmentMethods.toJsonArray { it.toJson() })
         .putOpt("componentCatalogMethod", componentCatalogMethod?.toJson())
         .put("evidence", evidence)
 
     fun restore(classLoader: ClassLoader): RestoredHomeComponentHideSymbols? {
+        val fragmentMethods = fragmentLifecycleMethods.mapNotNull { it.restoreOptional(classLoader) }
+        if (fragmentMethods.size != fragmentLifecycleMethods.size) return null
         val methods = baseHomeFragmentMethods.mapNotNull { it.restoreOptional(classLoader) }
         if (methods.size != baseHomeFragmentMethods.size) return null
         return RestoredHomeComponentHideSymbols(
+            fragmentLifecycleMethods = fragmentMethods,
             baseHomeFragmentMethods = methods,
             componentCatalogMethod = componentCatalogMethod?.restoreOptional(classLoader),
         )
@@ -1178,6 +1186,9 @@ data class HomeComponentHideSymbols(
 
     companion object {
         fun fromJson(obj: JSONObject): HomeComponentHideSymbols = HomeComponentHideSymbols(
+            fragmentLifecycleMethods = obj.optJSONArray("fragmentLifecycleMethods").toList {
+                MethodDescriptor.fromJson(it)
+            },
             baseHomeFragmentMethods = obj.optJSONArray("baseHomeFragmentMethods").toList {
                 MethodDescriptor.fromJson(it)
             },
@@ -1188,8 +1199,37 @@ data class HomeComponentHideSymbols(
 }
 
 data class RestoredHomeComponentHideSymbols(
+    val fragmentLifecycleMethods: List<Method>,
     val baseHomeFragmentMethods: List<Method>,
     val componentCatalogMethod: Method?,
+)
+
+data class FullNumberFormatSymbols(
+    val formatterMethods: List<MethodDescriptor>,
+    val evidence: String,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("formatterMethods", formatterMethods.toJsonArray { it.toJson() })
+        .put("evidence", evidence)
+
+    fun restore(classLoader: ClassLoader): RestoredFullNumberFormatSymbols? {
+        return RestoredFullNumberFormatSymbols(
+            formatterMethods = formatterMethods.restoreAll(classLoader) ?: return null,
+        )
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): FullNumberFormatSymbols = FullNumberFormatSymbols(
+            formatterMethods = obj.optJSONArray("formatterMethods").toList {
+                MethodDescriptor.fromJson(it)
+            },
+            evidence = obj.optString("evidence", "-"),
+        )
+    }
+}
+
+data class RestoredFullNumberFormatSymbols(
+    val formatterMethods: List<Method>,
 )
 
 data class VideoCommentSymbols(

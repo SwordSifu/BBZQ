@@ -72,6 +72,7 @@ object BiliSymbolResolver {
     private const val HP_HOME_RECOMMEND_FEED = "HomeRecommendFeed.Pegasus"
     private const val HP_HOME_RECOMMEND_TABS = "HomeRecommendTabs.BuildTabs"
     private const val HP_HOME_COMPONENT_HIDE = "HomeComponentHideHook.Components"
+    private const val HP_HOME_COMPONENT_HIDE_FRAGMENT = "HomeComponentHideHook.FragmentLifecycle"
     private const val HP_HOME_COMPONENT_HIDE_CATALOG = "HomeComponentHideHook.ComponentCatalog"
     private const val HP_VIDEO_COMMENT = "VideoCommentHook.InstallPoints"
     private const val HP_VIDEO_COMMENT_DISABLE = "VideoCommentHook.DisableComment"
@@ -110,6 +111,7 @@ object BiliSymbolResolver {
     private const val HP_CHRONOS_INTERACT_LAYER_VIEW_PROGRESS = "ChronosPromotionHook.InteractLayerViewProgress"
     private const val HP_CHRONOS_GEMINI_OPERATION_RENDER = "ChronosPromotionHook.GeminiOperationRender"
     private const val HP_CHRONOS_GEMINI_OPERATION_UPDATE = "ChronosPromotionHook.GeminiOperationUpdate"
+    private const val HP_FULL_NUMBER_FORMAT = "FullNumberFormatHook.NumberFormat"
 
     @Volatile
     private var memorySymbols: BiliHookSymbols? = null
@@ -297,6 +299,9 @@ object BiliSymbolResolver {
         val chronosPromotion = scanHookPoint(HP_CHRONOS_PROMOTION, hookPoints, scanErrors, log) {
             scanChronosPromotion(classLoader)
         }
+        val fullNumberFormat = scanHookPoint(HP_FULL_NUMBER_FORMAT, hookPoints, scanErrors, log) {
+            scanFullNumberFormat(classLoader)
+        }
 
         runCatching { bridge?.close() }
             .onFailure { recordError("DexKitBridge close failed: ${it.scanMessage()}") }
@@ -329,6 +334,7 @@ object BiliSymbolResolver {
             skipVideoAdProgress = skipVideoAdProgress,
             skipVideoAdAutoLike = skipVideoAdAutoLike,
             chronosPromotion = chronosPromotion,
+            fullNumberFormat = fullNumberFormat,
         )
     }
 
@@ -348,6 +354,7 @@ object BiliSymbolResolver {
                 }
                 is SymbolScanResult.Missing -> {
                     hookPoints += HookPointStatus.missing(id, result.reason)
+                    hookPoints += result.hookPoints
                     null
                 }
             }
@@ -376,6 +383,7 @@ object BiliSymbolResolver {
                 }
                 is SymbolScanResult.Missing -> {
                     hookPoints += HookPointStatus.optional(id, result.reason)
+                    hookPoints += result.hookPoints
                     null
                 }
             }
@@ -1423,6 +1431,11 @@ object BiliSymbolResolver {
     private fun scanHomeComponentHide(
         classLoader: ClassLoader,
     ): SymbolScanResult<HomeComponentHideSymbols> {
+        val fragmentClass = classLoader.loadClassOrNull(ANDROIDX_FRAGMENT_CLASS)
+        val fragmentLifecycleMethods = listOfNotNull(
+            fragmentClass?.findMethod("onViewCreated", Void.TYPE, View::class.java, Bundle::class.java),
+            fragmentClass?.findMethod("onHiddenChanged", Void.TYPE, Boolean::class.javaPrimitiveType!!),
+        ).distinctBy(Method::toGenericString)
         val baseClasses = BASE_HOME_FRAGMENT_CLASSES
             .asSequence()
             .mapNotNull { classLoader.loadClassOrNull(it) }
@@ -1448,13 +1461,26 @@ object BiliSymbolResolver {
             }
             .distinctBy(Method::toGenericString)
             .singleOrNull()
-        if (methods.isEmpty()) return SymbolScanResult.Missing("base home fragment lifecycle methods not found")
+        val fragmentLifecycleHookPoint = childHookPoint(
+            HP_HOME_COMPONENT_HIDE_FRAGMENT,
+            fragmentLifecycleMethods.isNotEmpty(),
+            "androidx fragment lifecycle methods not found",
+            "methods=${fragmentLifecycleMethods.size}",
+        )
+        if (fragmentLifecycleMethods.isEmpty()) {
+            return SymbolScanResult.Missing(
+                "androidx fragment lifecycle methods not found",
+                hookPoints = listOf(fragmentLifecycleHookPoint),
+            )
+        }
         val symbols = HomeComponentHideSymbols(
+            fragmentLifecycleMethods = fragmentLifecycleMethods.map(MethodDescriptor::of),
             baseHomeFragmentMethods = methods.map(MethodDescriptor::of),
             componentCatalogMethod = componentCatalog?.let(MethodDescriptor::of),
-            evidence = "baseLifecycle=${methods.size},catalog=${componentCatalog != null}",
+            evidence = "fragment=${fragmentLifecycleMethods.size},baseLifecycle=${methods.size},catalog=${componentCatalog != null}",
         )
         val hookPoints = listOf(
+            fragmentLifecycleHookPoint,
             childHookPoint(
                 HP_HOME_COMPONENT_HIDE_CATALOG,
                 componentCatalog != null,
@@ -1464,10 +1490,49 @@ object BiliSymbolResolver {
         )
         return SymbolScanResult.Found(
             symbols,
-            methods.joinToString("|") { it.declaringClass.name },
+            (fragmentLifecycleMethods + methods).joinToString("|") { "${it.declaringClass.name}.${it.name}" },
             symbols.evidence,
             hookPoints,
         )
+    }
+
+    private fun scanFullNumberFormat(
+        classLoader: ClassLoader,
+    ): SymbolScanResult<FullNumberFormatSymbols> {
+        val formatterClasses = NUMBER_FORMAT_CLASS_NAMES
+            .asSequence()
+            .mapNotNull { classLoader.loadClassOrNull(it) }
+            .distinctBy { it.name }
+            .toList()
+        val methods = formatterClasses
+            .asSequence()
+            .flatMap { type -> type.allMethods() }
+            .filter { method -> method.isFullNumberFormatterMethod() }
+            .distinctBy(Method::toGenericString)
+            .toList()
+        if (methods.isEmpty()) return SymbolScanResult.Missing("number formatter methods not found")
+
+        val symbols = FullNumberFormatSymbols(
+            formatterMethods = methods.map(MethodDescriptor::of),
+            evidence = "classes=${formatterClasses.size},methods=${methods.size}",
+        )
+        return SymbolScanResult.Found(
+            symbols,
+            methods.joinToString("|") { "${it.declaringClass.name}.${it.name}" },
+            symbols.evidence,
+        )
+    }
+
+    private fun Method.isFullNumberFormatterMethod(): Boolean {
+        if (!Modifier.isStatic(modifiers)) return false
+        if (returnType != String::class.java) return false
+        if (name !in FULL_NUMBER_FORMAT_METHOD_NAMES) return false
+        val params = parameterTypes
+        if (params.size !in 1..2) return false
+        val first = params[0]
+        if (first != Long::class.javaPrimitiveType && first != Int::class.javaPrimitiveType) return false
+        if (params.size == 2 && params[1] != String::class.java) return false
+        return true
     }
 
     private fun scanVideoComment(
@@ -2636,6 +2701,7 @@ object BiliSymbolResolver {
         "tv.danmaku.bili.ui.main2.resource.z",
         "tv.danmaku.p9138bili.p9228ui.main2.resource.z",
     )
+    private const val ANDROIDX_FRAGMENT_CLASS = "androidx.fragment.app.Fragment"
     private val BASE_HOME_FRAGMENT_CLASSES = arrayOf(
         "tv.danmaku.bili.home.tab.page.BaseHomeFragment",
         "tv.danmaku.p9138bili.p9170home.p9173tab.p9174page.BaseHomeFragment",
@@ -2646,6 +2712,16 @@ object BiliSymbolResolver {
         "onCreateView",
         "onViewCreated",
         "onResume",
+    )
+    private val NUMBER_FORMAT_CLASS_NAMES = listOf(
+        "com.bilibili.base.util.NumberFormat",
+        "com.bilibili.p4566base.p4568util.NumberFormat",
+        "com.bilibili.n9.util.NumberFormat",
+        "com.bilibili.lib.utils.NumberFormat",
+    )
+    private val FULL_NUMBER_FORMAT_METHOD_NAMES = setOf(
+        "format",
+        "formatWithComma",
     )
     private val THESEUS_TAB_PAGER_SERVICE = arrayOf(
         "com.bilibili.ship.theseus.united.page.tab.TheseusTabPagerService",
@@ -2855,5 +2931,6 @@ private sealed class SymbolScanResult<out T> {
 
     data class Missing(
         val reason: String,
+        val hookPoints: List<HookPointStatus> = emptyList(),
     ) : SymbolScanResult<Nothing>()
 }
