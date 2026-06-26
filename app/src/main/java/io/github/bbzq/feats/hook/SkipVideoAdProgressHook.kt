@@ -121,9 +121,7 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (!config.enabled) return
 
         val state = resolveMarkerState(progressBar) ?: return
-        val durationMs = state.durationMs.takeIf { it > 0L }
-            ?: progressBar.max.takeIf { it > 0 }?.toLong()
-            ?: return
+        val durationMs = durationForDrawing(progressBar, state) ?: return
         val segments = state.segments.filter { segment ->
             (config.modes[segment.category] ?: SkipVideoAdMode.IGNORE) != SkipVideoAdMode.IGNORE
         }
@@ -163,7 +161,9 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (controller != null) {
             updateDurationFromController(key, controller)
         } else {
-            SkipVideoAdState.updateDuration(key, progressBar.max.toLong())
+            progressBar.playerSeekDurationMs()?.let { durationMs ->
+                SkipVideoAdState.updateDuration(key, durationMs)
+            }
         }
         if (requestSegments && identity != null) {
             requestSegmentsIfMissing(identity)
@@ -254,6 +254,17 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?: controller.callNoArg("getRealDuration").asLong()
             ?: return
         SkipVideoAdState.updateDuration(key, duration)
+    }
+
+    private fun durationForDrawing(
+        progressBar: ProgressBar,
+        state: SkipVideoAdState.TimelineMarkerState,
+    ): Long? {
+        val stateDuration = state.durationMs.takeIf { it > 0L }
+        if (isPlayerSeekView(progressBar)) {
+            return progressBar.playerSeekDurationMs() ?: stateDuration
+        }
+        return stateDuration ?: progressBar.maxDurationMs()
     }
 
     private fun resolveStoryDurationMs(
@@ -485,12 +496,19 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         else -> null
     }
 
+    private fun ProgressBar.maxDurationMs(): Long? =
+        max.takeIf { it > 0 }?.toLong()
+
+    private fun ProgressBar.playerSeekDurationMs(): Long? =
+        maxDurationMs()?.takeIf { it >= MIN_PLAYER_SEEK_DURATION_MS }
+
     private companion object {
         private const val PLAYER_CONTAINER_CLASS = "tv.danmaku.biliplayerv2.PlayerContainer"
         private const val PLAYER_SEEK_WIDGET_CLASS = "com.bilibili.playerbizcommonv2.widget.seek.v3.PlayerSeekWidget3"
         private const val STORY_SEEK_BAR_CLASS = "com.bilibili.video.story.view.StorySeekBar"
         private const val STORY_DETAIL_DURATION_SCALE = 1000L
         private const val STORY_SEGMENT_REQUEST_DELAY_MS = 3000L
+        private const val MIN_PLAYER_SEEK_DURATION_MS = 1000L
 
         private val INLINE_PROGRESS_CLASSES = setOf(
             "com.bilibili.app.comm.list.common.inline.widgetV3.InlineProgressWidgetV3",
