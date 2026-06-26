@@ -45,6 +45,8 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private var cardPlayerContextRef: WeakReference<Any>? = null
     private var storyPlayerRef: WeakReference<Any>? = null
     private val reflectionFailureLogs = ConcurrentHashMap.newKeySet<String>()
+    private val noArgMethods = ConcurrentHashMap<String, Method>()
+    private val missingNoArgMethods = ConcurrentHashMap.newKeySet<String>()
     private val seekMethodsByControllerClass = ConcurrentHashMap<Class<*>, List<Method>>()
     private val playerCoreService: Any?
         get() = playerCoreServiceRef?.get()
@@ -186,7 +188,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         updateVideoIdentity(SkipVideoAdState.bvidFromAid(aid), nextCid)
     }
 
-    private fun updateVideoIdentity(nextBvid: String, nextCid: String) {
+    private fun updateVideoIdentity(nextBvid: String, nextCid: String, fetchSegments: Boolean = true) {
         val identity = SkipVideoAdState.resolveVideoIdentity(nextBvid, nextCid) ?: return
         if (identity.bvid == bvid && identity.cid == cid) return
 
@@ -201,7 +203,9 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         autoSkippedSegments.clear()
         manualNotifiedSegments.clear()
         waitTime = CHECK_INTERVAL_MS
-        fetchSegmentsIfNeeded()
+        if (fetchSegments) {
+            fetchSegmentsIfNeeded()
+        }
     }
 
     private fun hookPlayerCoreService(symbols: RestoredSkipVideoAdSymbols): Int {
@@ -261,14 +265,16 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     runCatching {
                         if (!isEnabled()) return@runCatching
                         val controller = param.thisObject ?: return@runCatching
-                        val key = rememberPlayerController(controller, controllerKind)
+                        val key = rememberPlayerController(controller, controllerKind) ?: return@runCatching
                         if (duration <= 0) {
                             duration = resolveDuration(controller)
                             if (duration > 0) {
                                 SkipVideoAdState.updateDuration(key, duration)
                             }
                         }
-                        fetchSegmentsIfNeeded()
+                        if (controllerKind != ControllerKind.STORY) {
+                            fetchSegmentsIfNeeded()
+                        }
                         val position = param.result.asLong() ?: return@runCatching
                         val state = resolveState(controller, stateMethodNames)
                         if (state in RESET_PLAYER_STATES) {
@@ -278,7 +284,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                         val now = System.currentTimeMillis()
                         if (now - lastSeekTime > waitTime) {
                             lastSeekTime = now
-                            waitTime = if (seekTo(position, key, controller)) {
+                            waitTime = if (seekTo(position, key, controller, allowFallbackState = controllerKind != ControllerKind.STORY)) {
                                 SKIP_COOLDOWN_MS
                             } else {
                                 CHECK_INTERVAL_MS
@@ -308,7 +314,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                     runCatching {
                         if (!isEnabled()) return@runCatching
                         val controller = param.thisObject ?: return@runCatching
-                        val key = rememberPlayerController(controller, controllerKind)
+                        val key = rememberPlayerController(controller, controllerKind) ?: return@runCatching
                         val state = param.result.asInt() ?: return@runCatching
                         if (state in 3..5 && duration <= 0) {
                             duration = resolveDuration(controller)
@@ -337,16 +343,51 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?: -1L
     }
 
-    private fun rememberPlayerController(controller: Any, controllerKind: ControllerKind): String {
+    private fun rememberPlayerController(controller: Any, controllerKind: ControllerKind): String? {
+        if (controllerKind == ControllerKind.STORY) {
+            val identity = resolveIdentityFromStoryController(controller)
+            if (identity == null) {
+                storyPlayerRef = null
+                return null
+            }
+            storyPlayerRef = WeakReference(controller)
+            val key = bindResolvedVideoIdentity(identity, controller, fetchSegments = false)
+            updateDurationFromController(key, controller)
+            return key
+        }
+
         when (controllerKind) {
             ControllerKind.PLAYER_CORE -> playerCoreServiceRef = WeakReference(controller)
             ControllerKind.CARD -> cardPlayerContextRef = WeakReference(controller)
-            ControllerKind.STORY -> storyPlayerRef = WeakReference(controller)
+            ControllerKind.STORY -> Unit
         }
         val key = SkipVideoAdState.keyForController(controller) ?: videoKey()
         updatePlaybackKey(key)
         SkipVideoAdState.bindController(controller, key)
         return key
+    }
+
+    private fun bindResolvedVideoIdentity(
+        identity: SkipVideoAdState.VideoIdentity,
+        controller: Any,
+        fetchSegments: Boolean,
+    ): String {
+        if (identity.bvid != bvid || identity.cid != cid) {
+            updateVideoIdentity(identity.bvid, identity.cid, fetchSegments)
+        } else {
+            SkipVideoAdState.activateVideo(identity)
+        }
+        updatePlaybackKey(identity.key)
+        SkipVideoAdState.bindController(controller, identity.key)
+        return identity.key
+    }
+
+    private fun updateDurationFromController(key: String, controller: Any) {
+        val nextDuration = resolveDuration(controller)
+        if (nextDuration > 0) {
+            duration = nextDuration
+            SkipVideoAdState.updateDuration(key, nextDuration)
+        }
     }
 
     private fun updatePlaybackKey(key: String) {
@@ -393,10 +434,15 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun videoKey(): String =
         SkipVideoAdState.resolveVideoIdentity(bvid, cid)?.key ?: ""
 
-    private fun seekTo(position: Long, key: String, controller: Any): Boolean {
+    private fun seekTo(
+        position: Long,
+        key: String,
+        controller: Any,
+        allowFallbackState: Boolean,
+    ): Boolean {
         val config = ModuleSettings.getSkipVideoAdCache(prefs)
         if (!config.enabled) return false
-        val state = timelineStateFor(key)
+        val state = timelineStateFor(key, allowFallbackState)
         val videoDuration = state?.durationMs?.takeIf { it > 0L } ?: duration
         if (videoDuration > 0 && position > videoDuration) return false
 
@@ -448,8 +494,9 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         return if (videoDuration > 0) target.coerceAtMost(videoDuration) else target
     }
 
-    private fun timelineStateFor(key: String): SkipVideoAdState.TimelineMarkerState? {
+    private fun timelineStateFor(key: String, allowFallbackState: Boolean): SkipVideoAdState.TimelineMarkerState? {
         SkipVideoAdState.stateForKey(key)?.let { return it }
+        if (!allowFallbackState) return null
         val fallbackKey = videoKey()
         if (fallbackKey != key) {
             SkipVideoAdState.stateForKey(fallbackKey)?.let { return it }
@@ -506,6 +553,61 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?.value
             .orEmpty()
     }
+
+    private fun resolveIdentityFromStoryController(controller: Any): SkipVideoAdState.VideoIdentity? =
+        resolveIdentityFromPlayableParams(controller.callNoArg("getCurrentPlayableParam"))
+            ?: resolveIdentityFromPlayableParams(controller.callNoArg("getCurrentPlayableParams"))
+
+    private fun resolveIdentityFromPlayableParams(params: Any?): SkipVideoAdState.VideoIdentity? {
+        if (params == null) return null
+        val directIdentity = SkipVideoAdState.resolveVideoIdentity(
+            bvid = params.callNoArg("getBvid") as? String,
+            cid = params.callNoArg("getCid"),
+            aid = params.callNoArg("getAvid") ?: params.callNoArg("getAid"),
+        )
+        if (directIdentity != null) return directIdentity
+
+        val displayParams = params.callNoArg("getDisplayParams")
+        val displayIdentity = SkipVideoAdState.resolveVideoIdentity(
+            bvid = displayParams?.callNoArg("getBvid") as? String,
+            cid = displayParams?.callNoArg("getCid"),
+            aid = displayParams?.callNoArg("getAvid") ?: displayParams?.callNoArg("getAid"),
+        )
+        if (displayIdentity != null) return displayIdentity
+
+        val danmakuParams = params.callNoArg("getDanmakuResolveParams")
+        return SkipVideoAdState.resolveVideoIdentity(
+            bvid = danmakuParams?.callNoArg("getBvid") as? String,
+            cid = danmakuParams?.callNoArg("getCid"),
+            aid = danmakuParams?.callNoArg("getAvid") ?: danmakuParams?.callNoArg("getAid"),
+        )
+    }
+
+    private fun Any.callNoArg(name: String): Any? {
+        val type = javaClass
+        val cacheKey = type.name + "#" + name
+        noArgMethods[cacheKey]?.let { method ->
+            return runCatching { method.invoke(this) }.getOrNull()
+        }
+        if (cacheKey in missingNoArgMethods) return null
+
+        val method = type.findNoArgMethod(name)
+        if (method == null) {
+            missingNoArgMethods.add(cacheKey)
+            return null
+        }
+        noArgMethods[cacheKey] = method
+        return runCatching { method.invoke(this) }.getOrNull()
+    }
+
+    private fun Class<*>.findNoArgMethod(name: String): Method? =
+        safeAllMethods("method $name").firstOrNull { method ->
+            method.name == name && method.parameterCount == 0
+        } ?: runCatching {
+            methods.firstOrNull { method ->
+                method.name == name && method.parameterCount == 0
+            }?.apply { isAccessible = true }
+        }.getOrNull()
 
     private fun Class<*>.safeAllMethods(reason: String): List<Method> =
         runCatching { allMethods().toList() }
