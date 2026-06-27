@@ -11,6 +11,7 @@ object SkipVideoAdState {
     @Volatile private var activeVideoKey = ""
 
     private val markerStates = ConcurrentHashMap<String, TimelineMarkerState>()
+    private val identities = ConcurrentHashMap<String, VideoIdentity>()
     private val loadingSegmentRequests = ConcurrentHashMap.newKeySet<String>()
     private val loadedSegmentRequests = ConcurrentHashMap.newKeySet<String>()
     private val failedSegmentRequests = ConcurrentHashMap<String, Long>()
@@ -43,9 +44,13 @@ object SkipVideoAdState {
     }
 
     fun activateVideo(identity: VideoIdentity): String {
+        identities[identity.key] = identity
         activeVideoKey = identity.key
         return identity.key
     }
+
+    fun identityForKey(key: String): VideoIdentity? =
+        key.takeIf { it.isNotBlank() }?.let(identities::get)
 
     fun activeStateForDuration(durationMs: Long): TimelineMarkerState? {
         val state = activeVideoKey
@@ -139,6 +144,8 @@ object SkipVideoAdState {
                     updateSegments(identity.key, result.segments)
                     if (result.segments.isNotEmpty()) {
                         log("SkipVideoAd marker loaded ${result.segments.size} segment(s) for ${identity.key}", null)
+                    } else {
+                        log("SkipVideoAd marker segment fetch ${result.status} for ${identity.key}", null)
                     }
                 }
             } catch (throwable: Throwable) {
@@ -195,7 +202,7 @@ object SkipVideoAdState {
         val bvid: String,
         val cid: String,
     ) {
-        val key: String = "cid:$cid"
+        val key: String = "bvid:$bvid:cid:$cid"
     }
 
     data class TimelineMarkerState(

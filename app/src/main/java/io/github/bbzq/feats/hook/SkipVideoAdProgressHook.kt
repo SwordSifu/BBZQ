@@ -11,11 +11,15 @@ import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.RoamingEnv
 import io.github.bbzq.feats.allFields
 import io.github.bbzq.feats.allMethods
+import io.github.bbzq.feats.callMethod
 import io.github.bbzq.feats.callStaticMethod
 import io.github.bbzq.feats.hookAfter
 import io.github.bbzq.feats.symbol.RestoredSkipVideoAdProgressSymbols
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.lang.reflect.Proxy
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
@@ -25,6 +29,7 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private val missingStoryControllerFields = ConcurrentHashMap.newKeySet<Class<*>>()
     private val playerContainerFields = ConcurrentHashMap<Class<*>, Field>()
     private val missingPlayerContainerFields = ConcurrentHashMap.newKeySet<Class<*>>()
+    private val directorObservers = Collections.synchronizedMap(WeakHashMap<Any, Any>())
     private val hookedProgressDrawMethods = ConcurrentHashMap.newKeySet<String>()
     private val pendingStorySegmentRequests = ConcurrentHashMap.newKeySet<String>()
     private val reflectionFailureLogs = ConcurrentHashMap.newKeySet<String>()
@@ -32,6 +37,10 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private var restoredSymbols: RestoredSkipVideoAdProgressSymbols? = null
     private val panelWidgetKtClass: Class<*>?
         get() = restoredSymbols?.panelWidgetKtClass
+    private val videoDirectorObserverType: Class<*>? by lazy {
+        runCatching { Class.forName(VIDEO_DIRECTOR_OBSERVER_CLASS, false, classLoader) }
+            .getOrNull()
+    }
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun startHook() {
@@ -151,7 +160,9 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
     ): SkipVideoAdState.TimelineMarkerState? {
         if (progressBar == null) return null
         val controller = progressBar.callNoArg("getPlayerCoreService")
-        val identity = resolveIdentityFromPlayerSeekView(progressBar)
+        val directors = resolvePlayerContainer(progressBar)?.let(::currentDirectors).orEmpty()
+        observeDirectors(directors)
+        val identity = resolveIdentityFromDirectors(directors)
         val key = identity?.let(SkipVideoAdState::activateVideo)
             ?: SkipVideoAdState.keyForController(controller)
             ?: return stateForViewOrActive(progressBar)
@@ -243,7 +254,9 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         mainHandler.postDelayed(
             {
                 pendingStorySegmentRequests.remove(identity.key)
-                requestSegmentsIfMissing(identity)
+                if (ModuleSettings.refreshSkipVideoAdCache(prefs).enabled) {
+                    requestSegmentsIfMissing(identity)
+                }
             },
             STORY_SEGMENT_REQUEST_DELAY_MS,
         )
@@ -298,12 +311,69 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         resolveIdentityFromPlayableParams(player?.callNoArg("getCurrentPlayableParam"))
             ?: resolveIdentityFromPlayableParams(player?.callNoArg("getCurrentPlayableParams"))
 
-    private fun resolveIdentityFromPlayerSeekView(progressBar: ProgressBar): SkipVideoAdState.VideoIdentity? {
-        val container = resolvePlayerContainer(progressBar) ?: return null
-        currentDirectors(container).forEach { director ->
+    private fun resolveIdentityFromDirectors(directors: List<Any>): SkipVideoAdState.VideoIdentity? {
+        directors.forEach { director ->
             resolveIdentityFromPlayableParams(director.callNoArg("getCurrentPlayableParams"))?.let { return it }
         }
         return null
+    }
+
+    private fun observeDirectors(directors: List<Any>) {
+        val observerType = videoDirectorObserverType ?: return
+        directors.forEach { director ->
+            if (directorObserverFor(director) != null) return@forEach
+            val observer = createVideoDirectorObserver(observerType)
+            var shouldInstall = false
+            synchronized(directorObservers) {
+                if (!directorObservers.containsKey(director)) {
+                    directorObservers[director] = observer
+                    shouldInstall = true
+                }
+            }
+            if (shouldInstall) {
+                director.callMethod("addVideoDirectorObserver", observer)
+            }
+        }
+    }
+
+    private fun directorObserverFor(director: Any): Any? =
+        synchronized(directorObservers) {
+            directorObservers[director]
+        }
+
+    private fun createVideoDirectorObserver(observerType: Class<*>): Any {
+        val holder = arrayOfNulls<Any>(1)
+        val observer = Proxy.newProxyInstance(
+            observerType.classLoader ?: classLoader,
+            arrayOf(observerType),
+        ) { _, method, args ->
+            when {
+                method.name == "toString" && method.parameterCount == 0 -> "BBZQSkipVideoAdDirectorObserver"
+                method.name == "hashCode" && method.parameterCount == 0 -> System.identityHashCode(holder[0])
+                method.name == "equals" && method.parameterCount == 1 -> holder[0] === args?.firstOrNull()
+                method.name in VIDEO_DIRECTOR_EVENT_METHODS -> {
+                    runCatching {
+                        bindPlayableParamsFromDirectorEvent(method.name, args)
+                    }.onFailure {
+                        log("SkipVideoAdProgress director observer failed at ${method.name}", it)
+                    }
+                    null
+                }
+                else -> null
+            }
+        }
+        holder[0] = observer
+        return observer
+    }
+
+    private fun bindPlayableParamsFromDirectorEvent(methodName: String, args: Array<Any?>?) {
+        val params = when (methodName) {
+            "onItemWillChange" -> args?.getOrNull(1) ?: args?.getOrNull(0)
+            else -> args?.firstOrNull()
+        }
+        val identity = resolveIdentityFromPlayableParams(params) ?: return
+        SkipVideoAdState.activateVideo(identity)
+        requestSegmentsIfMissing(identity)
     }
 
     private fun currentDirectors(container: Any): List<Any> {
@@ -506,9 +576,15 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private const val PLAYER_CONTAINER_CLASS = "tv.danmaku.biliplayerv2.PlayerContainer"
         private const val PLAYER_SEEK_WIDGET_CLASS = "com.bilibili.playerbizcommonv2.widget.seek.v3.PlayerSeekWidget3"
         private const val STORY_SEEK_BAR_CLASS = "com.bilibili.video.story.view.StorySeekBar"
+        private const val VIDEO_DIRECTOR_OBSERVER_CLASS = "tv.danmaku.biliplayerv2.service.VideoDirectorObserver"
         private const val STORY_DETAIL_DURATION_SCALE = 1000L
         private const val STORY_SEGMENT_REQUEST_DELAY_MS = 3000L
         private const val MIN_PLAYER_SEEK_DURATION_MS = 1000L
+        private val VIDEO_DIRECTOR_EVENT_METHODS = setOf(
+            "onItemStart",
+            "onPlayableParamsChanged",
+            "onItemWillChange",
+        )
 
         private val INLINE_PROGRESS_CLASSES = setOf(
             "com.bilibili.app.comm.list.common.inline.widgetV3.InlineProgressWidgetV3",

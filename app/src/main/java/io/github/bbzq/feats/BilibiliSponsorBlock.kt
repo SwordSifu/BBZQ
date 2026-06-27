@@ -138,11 +138,15 @@ class BilibiliSponsorBlock(
 
     private fun FetchResult.filterByCategories(categories: Set<String>): FetchResult {
         if (segments.isEmpty()) return this
-        if (categories.isEmpty()) return copy(status = FetchStatus.EMPTY, segments = emptyList())
+        if (categories.isEmpty()) return copy(status = FetchStatus.FILTERED_BY_CATEGORY, segments = emptyList())
 
         val filtered = segments.filter { it.category in categories }
         return copy(
-            status = if (filtered.isEmpty() && status == FetchStatus.SUCCESS) FetchStatus.EMPTY else status,
+            status = if (filtered.isEmpty() && status == FetchStatus.SUCCESS) {
+                FetchStatus.FILTERED_BY_CATEGORY
+            } else {
+                status
+            },
             segments = filtered,
         )
     }
@@ -153,7 +157,7 @@ class BilibiliSponsorBlock(
 
         val filtered = segments.filter { it.cid.isBlank() || it.cid == targetCid }
         return copy(
-            status = if (filtered.isEmpty() && status == FetchStatus.SUCCESS) FetchStatus.EMPTY else status,
+            status = if (filtered.isEmpty() && status == FetchStatus.SUCCESS) FetchStatus.FILTERED_BY_CID else status,
             segments = filtered,
         )
     }
@@ -183,6 +187,8 @@ class BilibiliSponsorBlock(
     enum class FetchStatus(val shouldCache: Boolean) {
         SUCCESS(true),
         EMPTY(true),
+        FILTERED_BY_CATEGORY(true),
+        FILTERED_BY_CID(true),
         NOT_FOUND(true),
         FAILED(false),
     }

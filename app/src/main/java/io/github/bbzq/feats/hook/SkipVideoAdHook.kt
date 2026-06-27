@@ -39,6 +39,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private val autoSkippedSegments = ConcurrentHashMap.newKeySet<String>()
     private val manualNotifiedSegments = ConcurrentHashMap.newKeySet<String>()
     private val pendingAutoLikeVideos = ConcurrentHashMap.newKeySet<String>()
+    private val pendingStorySegmentRequests = ConcurrentHashMap.newKeySet<String>()
 
     private var waitTime = CHECK_INTERVAL_MS
     private var playerCoreServiceRef: WeakReference<Any>? = null
@@ -190,7 +191,10 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun updateVideoIdentity(nextBvid: String, nextCid: String, fetchSegments: Boolean = true) {
         val identity = SkipVideoAdState.resolveVideoIdentity(nextBvid, nextCid) ?: return
-        if (identity.bvid == bvid && identity.cid == cid) return
+        if (identity.bvid == bvid && identity.cid == cid) {
+            SkipVideoAdState.activateVideo(identity)
+            return
+        }
 
         bvid = identity.bvid
         cid = identity.cid
@@ -274,6 +278,8 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                         }
                         if (controllerKind != ControllerKind.STORY) {
                             fetchSegmentsIfNeeded()
+                        } else if (duration > 0) {
+                            requestStorySegmentsIfReady(key)
                         }
                         val position = param.result.asLong() ?: return@runCatching
                         val state = resolveState(controller, stateMethodNames)
@@ -347,12 +353,19 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (controllerKind == ControllerKind.STORY) {
             val identity = resolveIdentityFromStoryController(controller)
             if (identity == null) {
-                storyPlayerRef = null
-                return null
+                val key = SkipVideoAdState.keyForController(controller) ?: return null
+                storyPlayerRef = WeakReference(controller)
+                updatePlaybackKey(key)
+                SkipVideoAdState.bindController(controller, key)
+                updateDurationFromController(key, controller)
+                return key
             }
             storyPlayerRef = WeakReference(controller)
             val key = bindResolvedVideoIdentity(identity, controller, fetchSegments = false)
             updateDurationFromController(key, controller)
+            if (duration > 0) {
+                requestStorySegmentsIfMissing(identity)
+            }
             return key
         }
 
@@ -431,6 +444,30 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
     }
 
+    private fun requestStorySegmentsIfReady(key: String) {
+        val identity = SkipVideoAdState.identityForKey(key) ?: return
+        requestStorySegmentsIfMissing(identity)
+    }
+
+    private fun requestStorySegmentsIfMissing(identity: SkipVideoAdState.VideoIdentity) {
+        val config = ModuleSettings.refreshSkipVideoAdCache(prefs)
+        if (!config.enabled) return
+        if (!SkipVideoAdState.shouldRequestSegments(identity, config.enabledCategories)) return
+        if (!pendingStorySegmentRequests.add(identity.key)) return
+
+        mainHandler.postDelayed(
+            {
+                pendingStorySegmentRequests.remove(identity.key)
+                val latestConfig = ModuleSettings.refreshSkipVideoAdCache(prefs)
+                if (!latestConfig.enabled) return@postDelayed
+                SkipVideoAdState.requestSegmentsIfMissing(identity, latestConfig.enabledCategories) { message, throwable ->
+                    log(message, throwable)
+                }
+            },
+            STORY_SEGMENT_REQUEST_DELAY_MS,
+        )
+    }
+
     private fun videoKey(): String =
         SkipVideoAdState.resolveVideoIdentity(bvid, cid)?.key ?: ""
 
@@ -501,7 +538,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (fallbackKey != key) {
             SkipVideoAdState.stateForKey(fallbackKey)?.let { return it }
         }
-        return SkipVideoAdState.activeStateForDuration(duration)
+        return null
     }
 
     private fun seekPlayerTo(
@@ -874,6 +911,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private const val AUTO_LIKE_DELAY_MS = 400L
         private const val AUTO_LIKE_RETRY_DELAY_MS = 350L
         private const val AUTO_LIKE_MAX_ATTEMPTS = 5
+        private const val STORY_SEGMENT_REQUEST_DELAY_MS = 3000L
         private const val MANUAL_PROMPT_BOTTOM_MARGIN_DP = 92
         private const val STORY_MANUAL_PROMPT_BOTTOM_MARGIN_DP = 216
         private const val MANUAL_PROMPT_TAG = "bbzq_skip_video_ad_manual_prompt"
