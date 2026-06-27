@@ -15,7 +15,6 @@ class DexKitScanBridge(
 }
 
 object DexKitBridgeProvider {
-    private const val DEXKIT_LIBRARY_NAME = "dexkit"
     private const val DEXKIT_LIBRARY_FILE_NAME = "libdexkit.so"
     private const val EXTRACTED_LIBRARY_DIR = "bbzq_native/dexkit"
 
@@ -87,60 +86,19 @@ object DexKitBridgeProvider {
         moduleContext: Context?,
         log: (String) -> Unit,
     ): String? {
-        try {
-            System.loadLibrary(DEXKIT_LIBRARY_NAME)
-            log("DexKitBridge: loaded by System.loadLibrary")
-            return null
-        } catch (t: Throwable) {
-            val loadLibraryError = t.scanMessage()
-            val direct = moduleContext?.applicationInfo?.nativeLibraryDir
-                ?.takeIf { it.isNotBlank() }
-                ?.let { File(it, DEXKIT_LIBRARY_FILE_NAME) }
-            if (direct?.isFile == true) {
-                try {
-                    System.load(direct.absolutePath)
-                    log("DexKitBridge: loaded native library from ${direct.parent}")
-                    return null
-                } catch (directError: Throwable) {
-                    return loadExtractedModuleLibrary(
-                        hostContext = hostContext,
-                        moduleContext = moduleContext,
-                        directError = "direct=${direct.absolutePath} ${directError.scanMessage()}",
-                        loadLibraryError = loadLibraryError,
-                        log = log,
-                    )
-                }
-            }
-            return loadExtractedModuleLibrary(
-                hostContext = hostContext,
-                moduleContext = moduleContext,
-                directError = "direct library missing",
-                loadLibraryError = loadLibraryError,
-                log = log,
-            )
-        }
-    }
-
-    private fun loadExtractedModuleLibrary(
-        hostContext: Context,
-        moduleContext: Context?,
-        directError: String,
-        loadLibraryError: String,
-        log: (String) -> Unit,
-    ): String? {
         val moduleApk = moduleContext?.applicationInfo?.sourceDir
             ?.takeIf { it.isNotBlank() }
             ?.let(::File)
             ?.takeIf { it.isFile }
-            ?: return "$directError; loadLibrary=$loadLibraryError; module apk unavailable"
+            ?: return "module apk unavailable"
         val target = extractLibrary(hostContext, moduleApk)
-            ?: return "$directError; loadLibrary=$loadLibraryError; libdexkit.so not found in module apk"
+            ?: return "libdexkit.so not found in module apk"
         return try {
             System.load(target.absolutePath)
             log("DexKitBridge: loaded native library extracted to ${target.parent}")
             null
         } catch (t: Throwable) {
-            "$directError; loadLibrary=$loadLibraryError; extracted=${target.absolutePath} ${t.scanMessage()}"
+            "extracted=${target.absolutePath} ${t.scanMessage()}"
         }
     }
 
