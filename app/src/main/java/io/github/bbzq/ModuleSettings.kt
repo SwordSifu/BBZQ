@@ -131,6 +131,7 @@ object ModuleSettings {
 
     val storyVideoAdTags = listOf(
         StoryVideoAdTag("ad", "广告", null),
+        StoryVideoAdTag("live", "直播", "直播"),
         StoryVideoAdTag("short", "短剧", "短剧"),
         StoryVideoAdTag("shopping", "购物", "购物"),
         StoryVideoAdTag("tv", "电视剧", "电视剧"),

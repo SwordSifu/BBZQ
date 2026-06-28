@@ -131,6 +131,7 @@ class StoryPlayerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         if (item == null) return null
         if (item.javaClass.name != STORY_DETAIL) return null
         if ("ad" in selectedTags && isStoryAd(item)) return "ad"
+        if ("live" in selectedTags && isStoryLive(item)) return "live"
         val entryText = readCartEntryText(item) ?: return null
         return selectedTags.firstOrNull { key -> tags[key]?.cartText == entryText }
             ?.let { "tag:$it" }
@@ -142,6 +143,39 @@ class StoryPlayerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }.getOrNull()
             ?: (item.getObjectField("ad") as? Boolean)
             ?: false
+
+    private fun isStoryLive(item: Any): Boolean {
+        val playerArgs = callPlayerArgs(item) ?: return false
+        val roomId = fieldValue(playerArgs, "roomId").asIntOrNull() ?: 0
+        val isLive = fieldValue(playerArgs, "isLive").asIntOrNull() ?: 0
+        val videoType = fieldValue(playerArgs, "videoType")?.toString()
+        val uri = runCatching { item.javaClass.getMethod("getUri").invoke(item)?.toString() }.getOrNull()
+        return roomId > 0 ||
+            isLive == 1 ||
+            videoType == LIVE_GOTO ||
+            uri?.contains(LIVE_URI_PART) == true
+    }
+
+    private fun callPlayerArgs(item: Any): Any? =
+        runCatching {
+            item.javaClass.getDeclaredMethod("getPlayerArgs").apply { isAccessible = true }.invoke(item)
+        }.getOrNull() ?: item.getObjectField("playerArgs")
+
+    private fun fieldValue(target: Any?, name: String): Any? =
+        if (target == null) {
+            null
+        } else {
+            runCatching {
+                target.javaClass.getField(name).get(target)
+            }.getOrNull()
+        }
+
+    private fun Any?.asIntOrNull(): Int? =
+        when (this) {
+            is Number -> toInt()
+            is String -> toIntOrNull()
+            else -> null
+        }
 
     private fun readCartEntryText(item: Any): String? {
         val cart = runCatching {
@@ -170,6 +204,8 @@ class StoryPlayerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private companion object {
         private const val STORY_DETAIL = "com.bilibili.video.story.StoryDetail"
+        private const val LIVE_GOTO = "live"
+        private const val LIVE_URI_PART = "live.bilibili.com/"
     }
 }
 
