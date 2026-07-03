@@ -1,5 +1,6 @@
 package io.github.bbzq
 
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
@@ -10,6 +11,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.SystemClock
 import android.text.InputType
+import android.text.SpannableString
+import android.text.method.LinkMovementMethod
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -26,6 +29,7 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.bbzq.DesktopIconHelper
 import io.github.bbzq.R
+import okhttp3.Call
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,6 +67,14 @@ class SettingsContentFactory(
     private lateinit var skipVideoAdAutoLikeSwitch: Switch
     private lateinit var blockedCountView: TextView
     private lateinit var symbolScanStatusSummary: TextView
+    /** 「检查更新」行的摘要文本视图，用于回显检查状态；界面销毁时置空避免泄漏。 */
+    private var updateCheckSummaryView: TextView? = null
+
+    /** 是否正在检查更新，用于去重并发点击。 */
+    private var updateChecking = false
+
+    /** 当前在途的检查更新请求，界面销毁时取消。 */
+    private var updateCheckCall: Call? = null
     private var versionTapCount = 0
     private var firstVersionTapAt = 0L
     private var refreshing = false
@@ -109,9 +121,6 @@ class SettingsContentFactory(
 
                 pageRoot.addView(createSectionLabel(context.getString(R.string.section_home_recommend_purify)))
                 pageRoot.addView(createSectionCard(homeRecommendRows()))
-
-                pageRoot.addView(createSectionLabel(context.getString(R.string.section_dynamic_page)))
-                pageRoot.addView(createSectionCard(dynamicRows()))
 
                 pageRoot.addView(createSectionLabel(context.getString(R.string.section_ui_customize)))
                 pageRoot.addView(createSectionCard(bottomBarRows()))
@@ -329,29 +338,6 @@ class SettingsContentFactory(
             rows += createHomeComponentGroup(components)
         }
         return rows
-    }
-
-    private fun dynamicRows(): List<View> {
-        return listOf(
-            createSwitchRow(
-                context.getString(R.string.dynamic_preferred_video_tab_title),
-                context.getString(R.string.dynamic_preferred_video_tab_summary),
-                ModuleSettings.KEY_DYNAMIC_PREFERRED_VIDEO_TAB_ENABLED,
-                false,
-            ),
-            createSwitchRow(
-                context.getString(R.string.dynamic_remove_city_tab_title),
-                context.getString(R.string.dynamic_remove_city_tab_summary),
-                ModuleSettings.KEY_DYNAMIC_REMOVE_CITY_TAB_ENABLED,
-                false,
-            ),
-            createSwitchRow(
-                context.getString(R.string.dynamic_remove_school_tab_title),
-                context.getString(R.string.dynamic_remove_school_tab_summary),
-                ModuleSettings.KEY_DYNAMIC_REMOVE_SCHOOL_TAB_ENABLED,
-                false,
-            ),
-        )
     }
 
     private fun bottomBarRows(): List<View> {
@@ -620,6 +606,13 @@ class SettingsContentFactory(
         ) {
             handleVersionRowClick()
         }
+        rows += createUpdateCheckRow()
+        rows += createSwitchRow(
+            context.getString(R.string.about_accept_prerelease_title),
+            context.getString(R.string.about_accept_prerelease_summary),
+            ModuleSettings.KEY_ACCEPT_PRERELEASE_UPDATE,
+            false,
+        )
         rows += createClickableInfoRow(
             context.getString(R.string.about_export_config_title),
             context.getString(R.string.about_export_config_summary),
@@ -737,6 +730,155 @@ class SettingsContentFactory(
         ModuleSettings.isSkipVideoAdSettingsVisible(prefs) ||
             ModuleSettings.isAccessKeySettingsVisible(prefs) ||
             ModuleSettings.isTryFreeQualitySettingsVisible(prefs)
+
+    private fun createUpdateCheckRow(): View {
+        val summaryView = TextView(context).apply {
+            text = context.getString(R.string.about_check_update_summary)
+            textSize = 12f
+            setTextColor(SUMMARY_COLOR)
+            setPadding(0, dp(4), 0, 0)
+        }
+        updateCheckSummaryView = summaryView
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { handleUpdateCheckClick() }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.about_check_update_title)
+                textSize = 15f
+                setTextColor(TITLE_COLOR)
+            })
+            addView(summaryView)
+        }
+    }
+
+    private fun handleUpdateCheckClick() {
+        if (updateChecking) return
+        updateChecking = true
+        updateCheckSummaryView?.text = context.getString(R.string.check_update_checking_summary)
+        updateCheckCall = UpdateChecker.check(
+            BuildConfig.RELEASE_NAME,
+            BuildConfig.VERSION_CODE,
+            ModuleSettings.isAcceptPrereleaseUpdateEnabled(prefs),
+        ) { result ->
+            updateCheckCall = null
+            updateChecking = false
+            if (isActivityFinishing()) return@check
+            onUpdateCheckResult(result)
+        }
+    }
+
+    /** 界面销毁时调用：取消在途请求并断开视图引用，避免回调持有已销毁的 Activity。 */
+    fun destroy() {
+        updateCheckCall?.cancel()
+        updateCheckCall = null
+        updateCheckSummaryView = null
+    }
+
+    private fun isActivityFinishing(): Boolean {
+        val activity = context as? Activity ?: return false
+        return activity.isFinishing || activity.isDestroyed
+    }
+
+    private fun onUpdateCheckResult(result: UpdateChecker.Result) {
+        when (result.status) {
+            UpdateChecker.Status.UP_TO_DATE -> {
+                updateCheckSummaryView?.text = context.getString(
+                    R.string.check_update_up_to_date_summary,
+                    result.latestVersion ?: BuildConfig.RELEASE_NAME,
+                )
+            }
+
+            UpdateChecker.Status.UPDATE_AVAILABLE -> {
+                val latest = result.latestVersion.orEmpty()
+                updateCheckSummaryView?.text = context.getString(
+                    R.string.check_update_available_summary,
+                    latest,
+                )
+                showUpdateAvailableDialog(result)
+            }
+
+            UpdateChecker.Status.FAILED -> {
+                updateCheckSummaryView?.text = context.getString(R.string.check_update_failed_summary)
+            }
+        }
+    }
+
+    private fun showUpdateAvailableDialog(result: UpdateChecker.Result) {
+        val latestVersionText = formatVersionWithCode(result.latestVersion.orEmpty(), result.latestVersionCode)
+        val currentVersionText = formatVersionWithCode(
+            result.currentVersion ?: BuildConfig.RELEASE_NAME,
+            BuildConfig.VERSION_CODE,
+        )
+        val header = buildString {
+            append(
+                context.getString(
+                    R.string.check_update_dialog_message,
+                    latestVersionText,
+                    currentVersionText,
+                ),
+            )
+            if (result.apkSizeBytes > 0) {
+                append('\n')
+                append(context.getString(R.string.check_update_apk_size, formatSize(result.apkSizeBytes)))
+            }
+        }
+        val notesRaw = result.releaseNotes?.takeIf { it.isNotBlank() }
+        val notesSpanned = notesRaw?.let { MarkdownFormatter.toSpanned(it) }
+            ?: SpannableString(context.getString(R.string.check_update_notes_empty))
+
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), 0)
+            addView(TextView(context).apply {
+                text = header
+                textSize = 14f
+                setTextColor(TITLE_COLOR)
+            })
+            addView(TextView(context).apply {
+                text = context.getString(R.string.check_update_notes_label)
+                textSize = 12f
+                setTextColor(SUMMARY_COLOR)
+                setPadding(0, dp(12), 0, dp(4))
+            })
+            addView(TextView(context).apply {
+                text = notesSpanned
+                textSize = 13f
+                setTextColor(TITLE_COLOR)
+                movementMethod = LinkMovementMethod.getInstance()
+            })
+        }
+        val scroll = ScrollView(context).apply { addView(content) }
+
+        AlertDialog.Builder(context)
+            .setTitle(R.string.check_update_dialog_title)
+            .setView(scroll)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.check_update_dialog_confirm) { _, _ ->
+                openUrl(result.releaseUrl ?: RELEASE_PAGE_URL)
+            }
+            .show()
+    }
+
+    /** 拼接「版本号（versionCode）」，code 无效时只显示版本号。 */
+    private fun formatVersionWithCode(version: String, code: Int): String =
+        if (code > 0) {
+            context.getString(R.string.check_update_version_with_code, version, code)
+        } else {
+            version
+        }
+
+    /** 将字节数格式化为可读大小（KB/MB）。 */
+    private fun formatSize(bytes: Long): String {
+        val kb = bytes / 1024.0
+        return if (kb < 1024) {
+            String.format(Locale.getDefault(), "%.1f KB", kb)
+        } else {
+            String.format(Locale.getDefault(), "%.1f MB", kb / 1024.0)
+        }
+    }
 
     private fun handleAccessKeyClick() {
         val key = AccessKeyRepository.read(prefs)
@@ -1731,5 +1873,8 @@ class SettingsContentFactory(
             "tv.danmaku.bilibilihd",
             "com.bilibili.app.blue",
         )
+        /** 检查更新弹窗「前往下载」的兜底地址，当 Release 未给出链接时使用。 */
+        private const val RELEASE_PAGE_URL =
+            "https://github.com/Xposed-Modules-Repo/io.github.bbzq/releases/latest"
     }
 }

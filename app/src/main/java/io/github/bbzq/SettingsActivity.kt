@@ -26,6 +26,7 @@ class SettingsActivity : Activity() {
     }
 
     private var pendingImportArchive: ByteArray? = null
+    private var contentFactory: SettingsContentFactory? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +35,7 @@ class SettingsActivity : Activity() {
 
         val page = intent.getStringExtra(EXTRA_PAGE) ?: PAGE_ROOT
         val toolbar = createToolbar(page)
-        val content = SettingsContentFactory(
+        val factory = SettingsContentFactory(
             context = this,
             prefs = prefs,
             page = page,
@@ -47,7 +48,9 @@ class SettingsActivity : Activity() {
             },
             onExportClick = { launchExportConfig() },
             onImportClick = { launchImportConfig() },
-        ).createScrollView()
+        )
+        contentFactory = factory
+        val content = factory.createScrollView()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#F6F7F8"))
@@ -63,6 +66,12 @@ class SettingsActivity : Activity() {
 
         setContentView(root)
         applyWindowInsets(root, toolbar, content)
+    }
+
+    override fun onDestroy() {
+        contentFactory?.destroy()
+        contentFactory = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
