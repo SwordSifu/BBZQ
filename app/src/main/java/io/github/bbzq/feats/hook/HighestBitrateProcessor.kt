@@ -101,32 +101,60 @@ internal class HighestBitrateProcessor(
     }
 
     private fun readAudioStats(container: Any, stream: Any, stats: VideoStreamStats): VideoStreamStats {
-        // Try to find audio from the audio stream list on the container (common in Bilibili DASH)
-        val audioStreamList = container.callMethod("getAudioStreamListList")
-            ?: container.callMethod("getAudioDashVideoList")
-        if (audioStreamList is Iterable<*>) {
-            val audio = audioStreamList.filterNotNull().firstOrNull()
-            if (audio != null) {
-                return stats.copy(
-                    audioBandwidth = number(audio, "getBandwidth") ?: 0,
-                    audioCodecId = number(audio, "getCodecid") ?: number(audio, "getCodeId") ?: 0,
-                    audioSampleRate = number(audio, "getSampleRate")?.toInt() ?: 0,
-                    audioChannels = number(audio, "getChannels")?.toInt() ?: 0,
-                )
-            }
-        }
-        // Fallback: try to read audio info directly from the main stream's audio dash video
-        val audio = stream.callMethod("getAudioDashVideo")
-        if (audio != null) {
-            return stats.copy(
-                audioBandwidth = number(audio, "getBandwidth") ?: 0,
-                audioCodecId = number(audio, "getCodecid") ?: number(audio, "getCodeId") ?: 0,
-                audioSampleRate = number(audio, "getSampleRate")?.toInt() ?: 0,
-                audioChannels = number(audio, "getChannels")?.toInt() ?: 0,
-            )
-        }
-        return stats
+        // Bilibili has shipped several PlayView protobuf layouts. In the common layout
+        // audio is a repeated `dash_audio` field on VideoInfo/VodInfo; some versions put
+        // it on the selected stream or wrap the actual DashItem in another message.
+        val audio = firstListItem(
+            container,
+            "getDashAudioList",
+            "getAudioStreamListList",
+            "getAudioDashVideoList",
+            "getAudioList",
+            "getAudioListList",
+            "getAudiosList",
+        ) ?: firstValue(
+            stream,
+            "getDashAudio",
+            "getAudioDashVideo",
+            "getAudio",
+        ) ?: return stats
+
+        val dashAudio = firstValue(
+            audio,
+            "getDashAudio",
+            "getAudioDashVideo",
+            "getDashItem",
+            "getAudio",
+        ) ?: audio
+        return stats.copy(
+            audioBandwidth = firstNumber(dashAudio, "getBandwidth", "getBandWidth", "getAudioBandwidth") ?: 0,
+            audioCodecId = firstNumber(dashAudio, "getCodecid", "getCodeId", "getCodecId", "getAudioCodecid") ?: 0,
+            audioSampleRate = firstNumber(
+                dashAudio,
+                "getSampleRate",
+                "getAudioSampleRate",
+                "getSamplingRate",
+            )?.toInt() ?: 0,
+            audioChannels = firstNumber(
+                dashAudio,
+                "getChannels",
+                "getChannelCount",
+                "getAudioChannels",
+            )?.toInt() ?: 0,
+        )
     }
+
+    private fun firstListItem(target: Any, vararg getters: String): Any? =
+        getters.asSequence()
+            .mapNotNull { getter -> target.callMethod(getter) as? Iterable<*> }
+            .mapNotNull { values -> values.firstOrNull { it != null } }
+            .firstOrNull()
+
+    private fun firstValue(target: Any, vararg getters: String): Any? =
+        getters.firstNotNullOfOrNull { getter -> target.callMethod(getter) }
+
+    private fun firstNumber(target: Any, vararg getters: String): Long? =
+        getters.firstNotNullOfOrNull { getter -> number(target, getter) }
 
     private fun representationKey(stream: Any): RepresentationKey? {
         val info = stream.callMethod("getStreamInfo") ?: return null
