@@ -311,11 +311,6 @@
     <string name="mine_keep_vip_space_summary">隐藏大会员入口时保留其占位空间，避免页面跳动。</string>
     <string name="skip_video_ad_auto_like_disable_dialog_confirm">仍然关闭</string>
     <string name="skip_video_ad_auto_like_disable_dialog_cancel">取消</string>
-    <string name="comment_picture_view_title">评论图片查看</string>
-    <string name="comment_picture_view_summary">评论图片三点菜单添加查看图片。</string>
-    <string name="comment_picture_view_open_label">查看图片</string>
-    <string name="comment_picture_view_share_label">分享</string>
-    <string name="comment_picture_view_open_failed">无法打开图片链接</string>
     
     <!-- 动态页 -->
     <string name="dynamic_preferred_video_tab_title">首选打开视频标签</string>

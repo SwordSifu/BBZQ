@@ -35,7 +35,6 @@ import io.github.bbzq.feats.hook.StoryFullscreenHook
 import io.github.bbzq.feats.hook.StoryPlayerAdHook
 import io.github.bbzq.feats.hook.BlockUpdateHook
 import io.github.bbzq.feats.hook.VideoCommentHook
-import io.github.bbzq.feats.hook.CommentPictureHook
 import io.github.bbzq.feats.hook.VideoDetailBannerAdHook
 import io.github.bbzq.feats.hook.FullNumberFormatHook
 import io.github.bbzq.feats.hook.MineProfileHook
@@ -135,7 +134,6 @@ object RoamingRuntime {
                 ::TeenagersModeHook,
                 ::BlockUpdateHook,
                 ::VideoCommentHook,
-                ::CommentPictureHook,
                 ::FullNumberFormatHook,
                 ::MineProfileHook,
             )

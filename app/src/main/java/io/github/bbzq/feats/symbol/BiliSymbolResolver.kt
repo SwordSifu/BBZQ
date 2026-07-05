@@ -87,7 +87,6 @@ object BiliSymbolResolver {
     private const val HP_VIDEO_DETAIL_BANNER_PAUSED_PAGE_REQUEST = "VideoDetailBannerAdHook.PausedPageRequest"
     private const val HP_VIDEO_DETAIL_BANNER_PAUSED_PAGE_PANEL = "VideoDetailBannerAdHook.PausedPagePanel"
     private const val HP_VIDEO_DETAIL_BANNER_RELATE_GAME = "VideoDetailBannerAdHook.RelateGame"
-    private const val HP_COMMENT_PICTURE = "CommentPictureHook.InitView"
     private const val HP_HOME_TOP_BAR = "HomeTopBarPurifyHook.InstallPoints"
     private const val HP_HOME_TOP_BAR_GAME = "HomeTopBarPurifyHook.GameMenu"
     private const val HP_HOME_TOP_BAR_VIEW_CREATED = "HomeTopBarPurifyHook.OnViewCreated"
@@ -296,9 +295,6 @@ object BiliSymbolResolver {
         val videoDetailBannerAd = scanHookPoint(HP_VIDEO_DETAIL_BANNER_AD, hookPoints, scanErrors, log) {
             scanVideoDetailBannerAd(classLoader, ::bridge)
         }
-        val commentPicture = scanHookPoint(HP_COMMENT_PICTURE, hookPoints, scanErrors, log) {
-            scanCommentPicture(classLoader)
-        }
         val homeTopBar = scanHookPoint(HP_HOME_TOP_BAR, hookPoints, scanErrors, log) {
             scanHomeTopBar(classLoader)
         }
@@ -357,7 +353,6 @@ object BiliSymbolResolver {
             storyDanmaku = storyDanmaku,
             storyComponentAlpha = storyComponentAlpha,
             videoDetailBannerAd = videoDetailBannerAd,
-            commentPicture = commentPicture,
             homeTopBar = homeTopBar,
             bottomBar = bottomBar,
             homeRecommendFeed = homeRecommendFeed,
@@ -2080,36 +2075,6 @@ object BiliSymbolResolver {
                 viewBindingClass.isAssignableFrom(method.parameterTypes[0]) &&
                 method.parameterTypes[1].isKotlinContinuationTypeName()
         }
-    }
-
-    private fun scanCommentPicture(
-        classLoader: ClassLoader,
-    ): SymbolScanResult<CommentPictureSymbols> {
-        val methods = COMMENT_IMAGE_VIEWER_CLASSES
-            .asSequence()
-            .mapNotNull { classLoader.loadClassOrNull(it) }
-            .flatMap { type ->
-                type.allMethods()
-                    .filter { method ->
-                        method.name == "initView" &&
-                            method.parameterCount == 1 &&
-                            View::class.java.isAssignableFrom(method.parameterTypes[0])
-                    }
-            }
-            .distinctBy(Method::toGenericString)
-            .toList()
-        if (methods.isEmpty()) {
-            return SymbolScanResult.Missing("comment image initView methods not found")
-        }
-        val symbols = CommentPictureSymbols(
-            initViewMethods = methods.map(MethodDescriptor::of),
-            evidence = "methods=${methods.size}",
-        )
-        return SymbolScanResult.Found(
-            symbols,
-            methods.joinToString("|") { "${it.declaringClass.name}.${it.name}" },
-            symbols.evidence,
-        )
     }
 
     private fun scanHomeTopBar(
@@ -3979,11 +3944,6 @@ object BiliSymbolResolver {
         "com.bilibili.ship.theseus.united.page.intro.module.relate.game"
     private const val GEMINI_BINDING_COMPONENT = "com.bilibili.app.gemini.ui.m"
     private const val GEMINI_SIMPLE_VIEW_ENTRY = "com.bilibili.app.gemini.ui.UIComponent\$b"
-    private val COMMENT_IMAGE_VIEWER_CLASSES = listOf(
-        "com.bilibili.app.comment3.ui.widget.imagecardviewer.CommentImageCardViewerDialogFragment",
-        "com.bilibili.p4439app.comment3.p4518ui.widget.imagecardviewer.CommentImageCardViewerDialogFragment",
-        "com.bilibili.app.comment.ui.image.CommentImageCardViewerDialogFragment",
-    )
     private const val HOME_MENU_ITEM_CLASS = "com.bilibili.lib.homepage.startdust.menu.a"
     private const val HOME_BASE_MAIN_FRAME_FRAGMENT = "tv.danmaku.bili.ui.main2.basic.BaseMainFrameFragment"
     private const val HOME_MAIN_FRAGMENT = "tv.danmaku.bili.ui.main2.MainFragment"

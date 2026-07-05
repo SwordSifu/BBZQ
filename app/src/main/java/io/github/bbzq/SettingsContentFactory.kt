@@ -501,12 +501,6 @@ class SettingsContentFactory(
                 ModuleSettings.KEY_COMMENT_NO_OPERATION,
                 false,
             ),
-            createSwitchRow(
-                context.getString(R.string.comment_picture_view_title),
-                context.getString(R.string.comment_picture_view_summary),
-                ModuleSettings.KEY_COMMENT_PICTURE_VIEW,
-                false,
-            ),
         )
     }
 

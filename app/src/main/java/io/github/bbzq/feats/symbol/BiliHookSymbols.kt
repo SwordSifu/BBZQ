@@ -33,7 +33,6 @@ data class BiliHookSymbols(
     val storyDanmaku: StoryDanmakuSymbols? = null,
     val storyComponentAlpha: StoryComponentAlphaSymbols? = null,
     val videoDetailBannerAd: VideoDetailBannerAdSymbols? = null,
-    val commentPicture: CommentPictureSymbols? = null,
     val homeTopBar: HomeTopBarSymbols? = null,
     val bottomBar: BottomBarSymbols? = null,
     val homeRecommendFeed: HomeRecommendFeedSymbols? = null,
@@ -74,7 +73,6 @@ data class BiliHookSymbols(
         .putOpt("storyDanmaku", storyDanmaku?.toJson())
         .putOpt("storyComponentAlpha", storyComponentAlpha?.toJson())
         .putOpt("videoDetailBannerAd", videoDetailBannerAd?.toJson())
-        .putOpt("commentPicture", commentPicture?.toJson())
         .putOpt("homeTopBar", homeTopBar?.toJson())
         .putOpt("bottomBar", bottomBar?.toJson())
         .putOpt("homeRecommendFeed", homeRecommendFeed?.toJson())
@@ -121,7 +119,6 @@ data class BiliHookSymbols(
                         ?.let(StoryComponentAlphaSymbols::fromJson),
                     videoDetailBannerAd = obj.optJSONObject("videoDetailBannerAd")
                         ?.let(VideoDetailBannerAdSymbols::fromJson),
-                    commentPicture = obj.optJSONObject("commentPicture")?.let(CommentPictureSymbols::fromJson),
                     homeTopBar = obj.optJSONObject("homeTopBar")?.let(HomeTopBarSymbols::fromJson),
                     bottomBar = obj.optJSONObject("bottomBar")?.let(BottomBarSymbols::fromJson),
                     homeRecommendFeed = obj.optJSONObject("homeRecommendFeed")?.let(HomeRecommendFeedSymbols::fromJson),
@@ -1255,35 +1252,6 @@ data class RestoredVideoDetailBannerAdSymbols(
     val createViewEntry: Method?,
     val bindToView: Method?,
     val kotlinUnit: Any?,
-)
-
-data class CommentPictureSymbols(
-    val initViewMethods: List<MethodDescriptor>,
-    val evidence: String,
-) {
-    fun toJson(): JSONObject = JSONObject()
-        .put("initViewMethods", initViewMethods.toJsonArray { it.toJson() })
-        .put("evidence", evidence)
-
-    fun restore(classLoader: ClassLoader): RestoredCommentPictureSymbols? {
-        val methods = initViewMethods.mapNotNull { descriptor ->
-            val owner = classLoader.loadClassOrNull(descriptor.declaringClassName) ?: return@mapNotNull null
-            descriptor.restore(owner)
-        }
-        if (methods.size != initViewMethods.size) return null
-        return RestoredCommentPictureSymbols(methods)
-    }
-
-    companion object {
-        fun fromJson(obj: JSONObject): CommentPictureSymbols = CommentPictureSymbols(
-            initViewMethods = obj.optJSONArray("initViewMethods").toList { MethodDescriptor.fromJson(it) },
-            evidence = obj.optString("evidence", "-"),
-        )
-    }
-}
-
-data class RestoredCommentPictureSymbols(
-    val initViewMethods: List<Method>,
 )
 
 data class HomeTopBarSymbols(
