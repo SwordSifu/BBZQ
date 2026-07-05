@@ -1177,12 +1177,8 @@ object BiliSymbolResolver {
     ): SymbolScanResult<HomeRecommendAutoRefreshSymbols> {
         val componentClass = classLoader.loadClassOrNull(HOME_AUTO_REFRESH_COMPONENT)
             ?: return SymbolScanResult.Missing("component class not found")
-        val requestManagerClass = classLoader.loadClassOrNull(HOME_PEGASUS_REQUEST_MANAGER)
-            ?: return SymbolScanResult.Missing("request manager class not found")
         val flushClass = classLoader.loadClassOrNull(HOME_PEGASUS_FLUSH)
             ?: return SymbolScanResult.Missing("flush class not found")
-        val resourceClass = classLoader.loadClassOrNull(HOME_RESOURCE)
-            ?: return SymbolScanResult.Missing("resource class not found")
 
         val autoRefreshMethod = componentClass.declaredMethods
             .firstOrNull {
@@ -1194,36 +1190,9 @@ object BiliSymbolResolver {
             }?.apply { isAccessible = true }
             ?: return SymbolScanResult.Missing("auto refresh method not found")
 
-        val requestMethodCandidates = requestManagerClass.allMethods()
-            .filter { it.isHomeRecommendRequestCandidate(flushClass) }
-            .distinctBy { it.toGenericString() }
-            .toList()
-        val requestMethods = requestMethodCandidates
-        val requestParamClass = requestMethods.map { it.parameterTypes[0] }.distinct().singleOrNull()
-            ?: return SymbolScanResult.Missing(
-                "request param class candidates=${requestMethods.map { it.parameterTypes[0].name }.distinct().size} " +
-                    "methods=${requestMethodCandidates.size} " +
-                    "params=${requestMethodCandidates.map { it.parameterTypes[0].name }.distinct().joinToString(limit = 4)} " +
-                    "fields=${requestMethodCandidates.map { describeHomeRequestParamCandidate(it.parameterTypes[0], flushClass) }.distinct().joinToString(limit = 4)}",
-            )
-        val requestSymbols = homeRequestParamSymbols(requestParamClass, flushClass)
-            ?: return SymbolScanResult.Missing("request param fields not found")
-        val resourceError = resourceClass.declaredMethods.firstOrNull {
-            Modifier.isStatic(it.modifiers) &&
-                it.parameterCount == 1 &&
-                Throwable::class.java.isAssignableFrom(it.parameterTypes[0]) &&
-                resourceClass.isAssignableFrom(it.returnType)
-        }?.apply { isAccessible = true }
-            ?: return SymbolScanResult.Missing("resource error method not found")
-
         val symbols = HomeRecommendAutoRefreshSymbols(
             autoRefreshMethod = MethodDescriptor.of(autoRefreshMethod),
-            requestMethods = requestMethods.map(MethodDescriptor::of),
-            idxField = FieldDescriptor.of(requestSymbols.idxField),
-            refreshField = FieldDescriptor.of(requestSymbols.refreshField),
-            flushField = FieldDescriptor.of(requestSymbols.flushField),
-            resourceErrorMethod = MethodDescriptor.of(resourceError),
-            evidence = "requestMethods=${requestMethods.size},param=${requestParamClass.name},returns=${requestMethods.map { it.returnType.name }.distinct().joinToString(limit = 3)}",
+            evidence = "param=${flushClass.name}",
         )
         return SymbolScanResult.Found(
             symbols,
@@ -1232,49 +1201,15 @@ object BiliSymbolResolver {
         )
     }
 
-    private fun homeRequestParamSymbols(requestParamClass: Class<*>?, flushClass: Class<*>): HomeRequestParamSymbols? {
-        if (requestParamClass == null) return null
-        val fields = requestParamClass.allFields()
-            .filter { !Modifier.isStatic(it.modifiers) }
-            .toList()
-        val idxField = fields.firstOrNull { it.isLongField() } ?: return null
-        val refreshField = fields.singleOrNull { it.isBooleanField() } ?: return null
-        val flushField = fields.singleOrNull { it.type == flushClass } ?: return null
-        return HomeRequestParamSymbols(idxField, refreshField, flushField)
-    }
-
-    private fun Method.isHomeRecommendRequestCandidate(flushClass: Class<*>): Boolean =
-        parameterCount in 3..4 &&
-            returnType == Any::class.java &&
-            Modifier.isStatic(modifiers) &&
-            !Modifier.isAbstract(modifiers) &&
-            !isSynthetic &&
-            parameterTypes.last().isKotlinContinuationTypeName() &&
-            homeRequestParamSymbols(parameterTypes[0], flushClass) != null
-
     private fun Class<*>.isKotlinContinuationTypeName(): Boolean =
         name == "kotlin.coroutines.Continuation" ||
             name == "kotlin.coroutines.jvm.internal.ContinuationImpl"
-
-    private fun Field.isLongField(): Boolean =
-        type == Long::class.javaPrimitiveType || type == Long::class.javaObjectType
 
     private fun Field.isIntField(): Boolean =
         type == Int::class.javaPrimitiveType || type == Int::class.javaObjectType
 
     private fun Field.isBooleanField(): Boolean =
         type == Boolean::class.javaPrimitiveType || type == Boolean::class.javaObjectType
-
-    private fun describeHomeRequestParamCandidate(requestParamClass: Class<*>?, flushClass: Class<*>): String {
-        if (requestParamClass == null) return "-"
-        val fields = requestParamClass.allFields()
-            .filter { !Modifier.isStatic(it.modifiers) }
-            .toList()
-        val longCount = fields.count { it.isLongField() }
-        val booleanCount = fields.count { it.isBooleanField() }
-        val flushCount = fields.count { it.type == flushClass }
-        return "${requestParamClass.name}:long=$longCount,bool=$booleanCount,flush=$flushCount"
-    }
 
     private fun scanHomeRecommendPreload(
         classLoader: ClassLoader,
@@ -3993,7 +3928,6 @@ object BiliSymbolResolver {
     )
 
     private const val HOME_AUTO_REFRESH_COMPONENT = "com.bilibili.pegasus.components.AutoRefreshComponent"
-    private const val HOME_PEGASUS_REQUEST_MANAGER = "com.bilibili.pegasus.request.b"
     private const val HOME_PEGASUS_FLUSH = "com.bilibili.pegasus.data.request.PegasusFlush"
     private val HOME_RECOMMEND_FRAGMENT_CLASSES = arrayOf(
         "com.bilibili.pegasus.PegasusFragment",
@@ -4013,7 +3947,6 @@ object BiliSymbolResolver {
         "androidx.recyclerview.widget.RecyclerView\$OnChildAttachStateChangeListener"
     private const val KOTLIN_FUNCTION0_CLASS = "kotlin.jvm.functions.Function0"
     private const val KOTLIN_CONTINUATION_CLASS = "kotlin.coroutines.Continuation"
-    private const val HOME_RESOURCE = "com.bilibili.lib.arch.lifecycle.Resource"
     private const val STORY_VIDEO_ACTIVITY = "com.bilibili.video.story.StoryVideoActivity"
     private const val STORY_VIDEO_FRAGMENT = "com.bilibili.video.story.StoryVideoFragment"
     private const val STORY_PAGER_PLAYER = "com.bilibili.video.story.player.StoryPagerPlayer"
@@ -4291,12 +4224,6 @@ object BiliSymbolResolver {
         "getActivityState",
     )
 }
-
-private data class HomeRequestParamSymbols(
-    val idxField: java.lang.reflect.Field,
-    val refreshField: java.lang.reflect.Field,
-    val flushField: java.lang.reflect.Field,
-)
 
 private data class ControllerClassScan(
     val classes: List<Class<*>>,

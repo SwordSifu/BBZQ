@@ -8,7 +8,6 @@ import io.github.bbzq.feats.hookBefore
 
 class HomeRecommendAutoRefreshHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private var blockedCount = 0
-    private var blockedColdStartCount = 0
 
     override fun startHook() {
         if (env.processName != env.packageName) return
@@ -30,21 +29,9 @@ class HomeRecommendAutoRefreshHook(env: RoamingEnv) : BaseRoamingHook(env) {
             param.result = null
             logBlocked(flushName)
         }
-        symbols.requestMethods.forEach { method ->
-            env.hookBefore(method) { param ->
-                val requestParam = param.args.firstOrNull() ?: return@hookBefore
-                if (!symbols.isColdStartNormalRefresh(requestParam, NORMAL_FLUSH)) return@hookBefore
-                param.result = symbols.resourceErrorMethod.invoke(
-                    null,
-                    BlockColdStartRefreshException(),
-                )
-                logBlockedColdStart()
-            }
-        }
         log(
             "startHook: HomeRecommendAutoRefresh at " +
-                "${symbols.autoRefreshMethod.declaringClass.name}.${symbols.autoRefreshMethod.name}, " +
-                "coldStartRequest=${symbols.requestMethods.joinToString { it.name }}",
+                    "${symbols.autoRefreshMethod.declaringClass.name}.${symbols.autoRefreshMethod.name}",
         )
     }
 
@@ -55,17 +42,7 @@ class HomeRecommendAutoRefreshHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
     }
 
-    private fun logBlockedColdStart() {
-        val count = ++blockedColdStartCount
-        if (count <= 20 || count % 20 == 0) {
-            log("HomeRecommendAutoRefresh blocked cold start request count=$count")
-        }
-    }
-
-    private class BlockColdStartRefreshException : RuntimeException("BBZQ blocked cold start refresh")
-
     private companion object {
-        private const val NORMAL_FLUSH = "NORMAL"
         private val BLOCKED_FLUSHES = setOf(
             "AUTO_BACK_FROM_BACKGROUND",
             "AUTO_BACK_FROM_BEHAVIOR",

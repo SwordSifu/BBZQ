@@ -790,53 +790,23 @@ data class RestoredDownloadThreadListenerSymbols(
 
 data class HomeRecommendAutoRefreshSymbols(
     val autoRefreshMethod: MethodDescriptor,
-    val requestMethods: List<MethodDescriptor>,
-    val idxField: FieldDescriptor,
-    val refreshField: FieldDescriptor,
-    val flushField: FieldDescriptor,
-    val resourceErrorMethod: MethodDescriptor,
     val evidence: String,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("autoRefreshMethod", autoRefreshMethod.toJson())
-        .put("requestMethods", requestMethods.toJsonArray { it.toJson() })
-        .put("idxField", idxField.toJson())
-        .put("refreshField", refreshField.toJson())
-        .put("flushField", flushField.toJson())
-        .put("resourceErrorMethod", resourceErrorMethod.toJson())
         .put("evidence", evidence)
 
     fun restore(classLoader: ClassLoader): RestoredHomeRecommendAutoRefreshSymbols? {
         val autoRefreshOwner = classLoader.loadClassOrNull(autoRefreshMethod.declaringClassName) ?: return null
         val autoRefresh = autoRefreshMethod.restore(autoRefreshOwner) ?: return null
-        val restoredRequestMethods = requestMethods.mapNotNull { descriptor ->
-            val owner = classLoader.loadClassOrNull(descriptor.declaringClassName) ?: return@mapNotNull null
-            descriptor.restore(owner)
-        }
-        if (restoredRequestMethods.size != requestMethods.size) return null
-
-        val idxOwner = classLoader.loadClassOrNull(idxField.declaringClassName) ?: return null
-        val refreshOwner = classLoader.loadClassOrNull(refreshField.declaringClassName) ?: return null
-        val flushOwner = classLoader.loadClassOrNull(flushField.declaringClassName) ?: return null
-        val errorOwner = classLoader.loadClassOrNull(resourceErrorMethod.declaringClassName) ?: return null
         return RestoredHomeRecommendAutoRefreshSymbols(
             autoRefreshMethod = autoRefresh,
-            requestMethods = restoredRequestMethods,
-            idxField = idxField.restore(idxOwner) ?: return null,
-            refreshField = refreshField.restore(refreshOwner) ?: return null,
-            flushField = flushField.restore(flushOwner) ?: return null,
-            resourceErrorMethod = resourceErrorMethod.restore(errorOwner) ?: return null,
         )
     }
 
     companion object {
         fun fromJson(obj: JSONObject): HomeRecommendAutoRefreshSymbols = HomeRecommendAutoRefreshSymbols(
             autoRefreshMethod = MethodDescriptor.fromJson(obj.getJSONObject("autoRefreshMethod")),
-            requestMethods = obj.optJSONArray("requestMethods").toList { MethodDescriptor.fromJson(it) },
-            idxField = FieldDescriptor.fromJson(obj.getJSONObject("idxField")),
-            refreshField = FieldDescriptor.fromJson(obj.getJSONObject("refreshField")),
-            flushField = FieldDescriptor.fromJson(obj.getJSONObject("flushField")),
-            resourceErrorMethod = MethodDescriptor.fromJson(obj.getJSONObject("resourceErrorMethod")),
             evidence = obj.optString("evidence", "-"),
         )
     }
@@ -844,20 +814,7 @@ data class HomeRecommendAutoRefreshSymbols(
 
 data class RestoredHomeRecommendAutoRefreshSymbols(
     val autoRefreshMethod: Method,
-    val requestMethods: List<Method>,
-    val idxField: Field,
-    val refreshField: Field,
-    val flushField: Field,
-    val resourceErrorMethod: Method,
-) {
-    fun isColdStartNormalRefresh(requestParam: Any, normalFlushName: String): Boolean {
-        val idx = runCatching { idxField.getLong(requestParam) }.getOrNull() ?: return false
-        val refresh = runCatching { refreshField.getBoolean(requestParam) }.getOrNull() ?: return false
-        val flushName = (runCatching { flushField.get(requestParam) }.getOrNull() as? Enum<*>)?.name
-            ?: return false
-        return idx == 0L && refresh && flushName == normalFlushName
-    }
-}
+)
 
 data class HomeRecommendPreloadSymbols(
     val fragmentOnViewCreated: MethodDescriptor,

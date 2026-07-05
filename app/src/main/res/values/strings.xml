@@ -156,7 +156,7 @@
     <string name="home_recommend_vertical_av_detail_title">默认以详情页打开竖屏视频</string>
     <string name="home_recommend_vertical_av_detail_summary">首页推荐中的竖屏视频点开后默认进入详情页。</string>
     <string name="home_recommend_auto_refresh_title">阻止首页推荐自动刷新</string>
-    <string name="home_recommend_auto_refresh_summary">阻止冷启动、长时间后台回到前台或从其他页面返回时自动刷新推荐流，保留手动刷新。</string>
+    <string name="home_recommend_auto_refresh_summary">阻止长时间后台回到前台或从其他页面返回时自动刷新推荐流，保留手动刷新。</string>
     <string name="home_recommend_preload_title">首页推荐预加载</string>
     <string name="home_recommend_preload_summary">提前触发下一页加载，减少滑到底部时的等待。</string>
     <string name="home_recommend_custom_filter_title">首页卡片过滤</string>

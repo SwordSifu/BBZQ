@@ -303,6 +303,7 @@ class HomeRecommendPreloadHook(env: RoamingEnv) : BaseRoamingHook(env) {
         accessors: RecyclerViewAccessors,
     ): DistanceSnapshot? = runCatching {
         if (!recyclerView.isAttachedToWindow) return@runCatching null
+        if (!recyclerView.canScrollVertically(-1)) return@runCatching null
         val group = recyclerView as? ViewGroup ?: return@runCatching null
         val childCount = group.childCount
         if (childCount <= 0) return@runCatching null
@@ -479,8 +480,8 @@ class HomeRecommendPreloadHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private companion object {
-        private const val TARGET_BUFFER_ROWS = 128
-        private const val MAX_REFILL_PAGES = 4
+        private const val TARGET_BUFFER_ROWS = 8
+        private const val MAX_REFILL_PAGES = 1
         private const val HOST_DISTANCE_ROWS = 1
         private const val SCROLL_STATE_IDLE = 0
         private const val SCROLL_STATE_SETTLING = 2
