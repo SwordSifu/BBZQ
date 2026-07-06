@@ -131,9 +131,8 @@ class DynamicPageHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun isDynamicCandidate(activity: Activity, root: View, ownerName: String): Boolean {
         if (isDynamicFragmentOwner(ownerName)) return true
-        val className = activity.javaClass.name.lowercase()
-        if (matchesOwner(className, DYNAMIC_ACTIVITY_KEYWORDS)) return true
-        return findMatchingTextView(root, DYNAMIC_TAB_LABELS) != null
+        return findMatchingTextView(root, CITY_TAB_LABELS) != null ||
+            findMatchingTextView(root, SCHOOL_TAB_LABELS) != null
     }
 
     private fun clickPreferredVideoTab(root: View): Boolean {
@@ -256,18 +255,10 @@ class DynamicPageHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private const val MAX_VIEW_SCAN_NODES = 1500
         private const val MAX_PARENT_DEPTH = 8
         private const val ANDROIDX_FRAGMENT_CLASS = "androidx.fragment.app.Fragment"
-        private val DYNAMIC_ACTIVITY_KEYWORDS = listOf(
-            "dynamic",
-            "space",
-            "following",
-            "feed",
-            "opus",
-        )
         private val DYNAMIC_FRAGMENT_KEYWORDS = listOf(
             "followinglist.home.mediator",
             "mediatorfragment",
         )
-        private val DYNAMIC_TAB_LABELS = setOf("同城", "校园", "视频")
         private val VIDEO_TAB_LABELS = setOf("视频")
         private val CITY_TAB_LABELS = setOf("同城")
         private val SCHOOL_TAB_LABELS = setOf("校园")
