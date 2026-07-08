@@ -135,6 +135,9 @@ class SettingsContentFactory(
                 pageRoot.addView(createSectionLabel(context.getString(R.string.section_dynamic_page)))
                 pageRoot.addView(createSectionCard(dynamicRows()))
 
+                pageRoot.addView(createSectionLabel(context.getString(R.string.section_search_purify)))
+                pageRoot.addView(createSectionCard(searchPurifyRows()))
+
                 pageRoot.addView(createSectionLabel(context.getString(R.string.section_ui_customize)))
                 pageRoot.addView(createSectionCard(bottomBarRows()))
 
@@ -365,6 +368,29 @@ class SettingsContentFactory(
                 context.getString(R.string.dynamic_remove_school_tab_title),
                 context.getString(R.string.dynamic_remove_school_tab_summary),
                 ModuleSettings.KEY_DYNAMIC_REMOVE_SCHOOL_TAB_ENABLED,
+                false,
+            ),
+        )
+    }
+
+    private fun searchPurifyRows(): List<View> {
+        return listOf(
+            createSwitchRow(
+                context.getString(R.string.search_purify_hot_title),
+                context.getString(R.string.search_purify_hot_summary),
+                ModuleSettings.KEY_PURIFY_SEARCH_HOT_ENABLED,
+                false,
+            ),
+            createSwitchRow(
+                context.getString(R.string.search_purify_recommend_title),
+                context.getString(R.string.search_purify_recommend_summary),
+                ModuleSettings.KEY_PURIFY_SEARCH_RECOMMEND_ENABLED,
+                false,
+            ),
+            createSwitchRow(
+                context.getString(R.string.search_purify_history_title),
+                context.getString(R.string.search_purify_history_summary),
+                ModuleSettings.KEY_PURIFY_SEARCH_HISTORY_ENABLED,
                 false,
             ),
         )

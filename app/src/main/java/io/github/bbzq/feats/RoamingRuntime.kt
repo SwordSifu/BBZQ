@@ -1,4 +1,4 @@
-﻿package io.github.bbzq.feats
+package io.github.bbzq.feats
 
 import android.content.Context
 import android.content.ContextWrapper
@@ -38,6 +38,7 @@ import io.github.bbzq.feats.hook.VideoDetailBannerAdHook
 import io.github.bbzq.feats.hook.FullNumberFormatHook
 import io.github.bbzq.feats.hook.MineProfileHook
 import io.github.bbzq.feats.hook.PlayerUiHook
+import io.github.bbzq.feats.hook.SearchPurifyHook
 import io.github.bbzq.feats.symbol.BiliHookSymbols
 import io.github.bbzq.feats.symbol.BiliSymbolResolver
 import io.github.libxposed.api.XposedInterface
@@ -136,6 +137,7 @@ object RoamingRuntime {
                 ::VideoCommentHook,
                 ::FullNumberFormatHook,
                 ::MineProfileHook,
+                ::SearchPurifyHook,
             )
             ProcessScope.UNSUPPORTED -> emptyList()
         }
