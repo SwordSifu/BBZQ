@@ -38,6 +38,7 @@ import io.github.bbzq.feats.hook.VideoDetailBannerAdHook
 import io.github.bbzq.feats.hook.FullNumberFormatHook
 import io.github.bbzq.feats.hook.MineProfileHook
 import io.github.bbzq.feats.hook.PlayerUiHook
+import io.github.bbzq.feats.hook.WoMicHook
 import io.github.bbzq.feats.symbol.BiliHookSymbols
 import io.github.bbzq.feats.symbol.BiliSymbolResolver
 import io.github.libxposed.api.XposedInterface
@@ -65,6 +66,17 @@ object RoamingRuntime {
             classLoader = classLoader,
             logger = log,
         )
+
+        if (packageName == WO_MIC_PACKAGE) {
+            env.log("BBZQ runtime starting for $packageName (WO Mic mode)")
+            ModuleSettingsBridge.attach(env.hostContext, xposed)
+            val woMicHook = WoMicHook(env)
+            runCatching { woMicHook.startHook() }
+                .onFailure { env.log("WoMicHook failed", it) }
+            env.log("BBZQ runtime installed WoMic hook(s)")
+            return
+        }
+
         val processScope = resolveProcessScope(packageName, processName)
 
         env.log("BBZQ runtime starting for $packageName/$processName")
@@ -165,6 +177,8 @@ object RoamingRuntime {
         DOWNLOAD,
         UNSUPPORTED,
     }
+
+    private const val WO_MIC_PACKAGE = "com.wo.voice2"
 }
 
 class RoamingEnv(

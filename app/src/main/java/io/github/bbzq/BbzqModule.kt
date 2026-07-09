@@ -134,6 +134,7 @@ class BbzqModule : XposedModule() {
             "tv.danmaku.bili",
             "com.bilibili.app.blue",
             "top.nkbe.npatch",
+            "com.wo.voice2",
         )
 
         private val currentApplicationMethod: java.lang.reflect.Method by lazy(LazyThreadSafetyMode.NONE) {

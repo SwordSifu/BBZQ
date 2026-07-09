@@ -11,6 +11,7 @@
         <package android:name="com.bilibili.app.in" />
         <package android:name="tv.danmaku.bilibilihd" />
         <package android:name="com.bilibili.app.blue" />
+        <package android:name="com.wo.voice2" />
     </queries>
 
     <application
