@@ -290,7 +290,14 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun Any.isQuickReplyDialogIntentType(): Boolean {
         val className = javaClass.name
         return className.endsWith("PublishDialogIntent", ignoreCase = true) ||
-            className.contains("PublishDialogIntent", ignoreCase = true)
+            className.contains("PublishDialogIntent", ignoreCase = true) ||
+            (
+                className.contains(".comment3.", ignoreCase = true) &&
+                    javaClass.simpleName.contains("DialogIntent", ignoreCase = true) &&
+                    javaClass.declaredFields.any { field ->
+                        field.type.isEnum || field.type == Boolean::class.javaPrimitiveType
+                    }
+            )
     }
 
     private fun Any.resolvePublishDialogIntent(): Any? {
@@ -308,7 +315,14 @@ class VideoCommentHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun Class<*>.isQuickReplyDialogIntentType(): Boolean {
         val className = name
         return className.endsWith("PublishDialogIntent", ignoreCase = true) ||
-            className.contains("PublishDialogIntent", ignoreCase = true)
+            className.contains("PublishDialogIntent", ignoreCase = true) ||
+            (
+                className.contains(".comment3.", ignoreCase = true) &&
+                    simpleName.contains("DialogIntent", ignoreCase = true) &&
+                    declaredFields.any { field ->
+                        field.type.isEnum || field.type == Boolean::class.javaPrimitiveType
+                    }
+            )
     }
 
     private fun resolvePublishDialogIntentFields(type: Class<*>): PublishDialogIntentFields {

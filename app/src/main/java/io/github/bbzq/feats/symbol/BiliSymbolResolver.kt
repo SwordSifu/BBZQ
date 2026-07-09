@@ -1211,12 +1211,17 @@ object BiliSymbolResolver {
         val onViewCreated = fragmentClass.findMethod("onViewCreated", Void.TYPE, View::class.java, Bundle::class.java)
             ?.apply { isAccessible = true }
             ?: return SymbolScanResult.Missing("PegasusFragment.onViewCreated not found")
-        val loadMoreScan = findConcreteImplementors(
+        val childAttachScan = findConcreteImplementors(
             classLoader = classLoader,
             bridge = bridge,
             interfaceName = RECYCLER_VIEW_ON_CHILD_ATTACH_STATE_CHANGE_LISTENER,
         )
-        val loadMoreClasses = loadMoreScan.classes
+        val scrollListenerScan = findConcreteImplementors(
+            classLoader = classLoader,
+            bridge = bridge,
+            interfaceName = RECYCLER_VIEW_ON_SCROLL_LISTENER,
+        )
+        val loadMoreClasses = (childAttachScan.classes.asSequence() + scrollListenerScan.classes.asSequence())
             .asSequence()
             .filter {
                 it.isHomeRecommendLoadMoreListenerCandidate(
@@ -1230,7 +1235,16 @@ object BiliSymbolResolver {
         val loadMoreClass = loadMoreClasses.singleOrNull()
             ?: return SymbolScanResult.Missing(
                 "load more listener candidates=${loadMoreClasses.size}" +
-                    loadMoreScan.error.orEmpty().takeIf { it.isNotBlank() }?.let { ", scanError=$it" }.orEmpty(),
+                    buildString {
+                        childAttachScan.error.orEmpty().takeIf { it.isNotBlank() }?.let {
+                            append(", childAttachScanError=")
+                            append(it)
+                        }
+                        scrollListenerScan.error.orEmpty().takeIf { it.isNotBlank() }?.let {
+                            append(", scrollScanError=")
+                            append(it)
+                        }
+                    },
             )
         val loadMoreMethods = loadMoreClass.declaredMethods
             .filter { it.isHomeRecommendLoadMoreCheckMethod(baseRecyclerViewClass) }
@@ -1301,10 +1315,20 @@ object BiliSymbolResolver {
         !isInterface &&
             !Modifier.isAbstract(modifiers) &&
             scrollListenerClass.isAssignableFrom(this) &&
-            childAttachListenerClass.isAssignableFrom(this) &&
             declaredConstructors.any { ctor ->
                 ctor.parameterTypes.any { it.name == KOTLIN_FUNCTION0_CLASS }
             } &&
+            declaredFields.count { !Modifier.isStatic(it.modifiers) && it.type.isBooleanFieldType() } <= 2 &&
+            declaredFields.count { !Modifier.isStatic(it.modifiers) && it.type.isIntFieldType() } in 1..3 &&
+            (
+                childAttachListenerClass.isAssignableFrom(this) ||
+                    declaredMethods.any { method ->
+                        method.parameterCount == 2 &&
+                            method.parameterTypes[0] == recyclerViewClass &&
+                            method.parameterTypes[1] == Int::class.javaPrimitiveType &&
+                            method.returnType == Void.TYPE
+                    }
+            ) &&
             declaredMethods.any { it.isHomeRecommendLoadMoreCheckMethod(recyclerViewClass) }
 
     private fun Method.isHomeRecommendLoadMoreCheckMethod(recyclerViewClass: Class<*>): Boolean =
@@ -1324,6 +1348,12 @@ object BiliSymbolResolver {
             returnType == Any::class.java &&
             !Modifier.isStatic(modifiers) &&
             !Modifier.isAbstract(modifiers)
+
+    private fun Class<*>.isBooleanFieldType(): Boolean =
+        this == Boolean::class.javaPrimitiveType || this == Boolean::class.javaObjectType
+
+    private fun Class<*>.isIntFieldType(): Boolean =
+        this == Int::class.javaPrimitiveType || this == Int::class.javaObjectType
 
     private fun childHookPoint(id: String, found: Boolean, missing: String, evidence: String = "-"): HookPointStatus =
         if (found) {
@@ -3419,10 +3449,10 @@ object BiliSymbolResolver {
             .asSequence()
             .flatMap { name -> sequenceOf(name, name.substringBefore('$')).distinct() }
             .mapNotNull { classLoader.loadClassOrNull(it) }
-            .filter { it.hasPublishDialogActionChild() }
+            .filter { it.hasQuickReplyPublishDialogReference() }
             .flatMap { type ->
                 generateSequence(type) { it.superclass?.takeIf { parent -> parent != Any::class.java } }
-                    .filter { it.isCommentActionBaseType(emptyList()) || it.hasPublishDialogActionChild() }
+                    .filter { it.isCommentActionBaseType(emptyList()) || it.hasQuickReplyPublishDialogReference() }
             }
             .distinctBy { it.name }
             .toList()
@@ -3433,11 +3463,16 @@ object BiliSymbolResolver {
         )
     }
 
-    private fun Class<*>.hasPublishDialogActionChild(): Boolean =
-        declaredClasses.any { child ->
-            child.declaredFields.any { field -> field.type.isQuickReplyDialogIntentType() } &&
-                child.declaredFields.isNotEmpty()
-        }
+    private fun Class<*>.hasQuickReplyPublishDialogReference(): Boolean =
+        declaredFields.any { field -> field.type.isQuickReplyDialogIntentType() } ||
+            declaredClasses.any { child ->
+                child.declaredFields.any { field -> field.type.isQuickReplyDialogIntentType() } &&
+                    child.declaredFields.isNotEmpty()
+            } ||
+            allMethods().any { method ->
+                method.returnType.isQuickReplyDialogIntentType() ||
+                    method.parameterTypes.any { it.isQuickReplyDialogIntentType() }
+            }
 
     private fun Class<*>.isCommentActionType(actionBases: List<Class<*>> = emptyList()): Boolean {
         if (actionBases.any { it.isAssignableFrom(this) }) return true
@@ -3464,7 +3499,14 @@ object BiliSymbolResolver {
     private fun Class<*>.isQuickReplyDialogIntentType(): Boolean {
         val className = name
         return className.endsWith("PublishDialogIntent", ignoreCase = true) ||
-            className.contains("PublishDialogIntent", ignoreCase = true)
+            className.contains("PublishDialogIntent", ignoreCase = true) ||
+            (
+                className.contains(".comment3.", ignoreCase = true) &&
+                    simpleName.contains("DialogIntent", ignoreCase = true) &&
+                    declaredFields.any { field ->
+                        field.type.isEnum || field.type == Boolean::class.javaPrimitiveType
+                    }
+            )
     }
 
     private fun Class<*>.isPlayViewRequestType(): Boolean {
