@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -111,6 +112,7 @@ internal class VideoStatsOverlayController(
                     return@post
                 }
                 positionStatsIcon(activity, parent, this, density, attemptsLeft)
+                installDragSupport(activity, parent, this)
             }
         }
     }
@@ -195,6 +197,58 @@ internal class VideoStatsOverlayController(
         val id = view.id
         if (id == View.NO_ID) return ""
         return runCatching { view.resources.getResourceEntryName(id) }.getOrDefault("")
+    }
+
+    private fun installDragSupport(activity: Activity, parent: FrameLayout, icon: View) {
+        val touchSlop = (8f * parent.resources.displayMetrics.density).toInt()
+        icon.setOnTouchListener(object : View.OnTouchListener {
+            private var downRawX = 0f
+            private var downRawY = 0f
+            private var startLeftMargin = 0
+            private var startTopMargin = 0
+            private var dragging = false
+
+            override fun onTouch(view: View, event: MotionEvent): Boolean {
+                val params = view.layoutParams as? FrameLayout.LayoutParams ?: return false
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downRawX = event.rawX
+                        downRawY = event.rawY
+                        startLeftMargin = params.leftMargin
+                        startTopMargin = params.topMargin
+                        dragging = false
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - downRawX
+                        val dy = event.rawY - downRawY
+                        if (!dragging && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
+                            dragging = true
+                        }
+                        if (!dragging) return true
+                        val maxLeft = (parent.width - view.width).coerceAtLeast(0)
+                        val maxTop = (parent.height - view.height).coerceAtLeast(0)
+                        params.gravity = Gravity.TOP or Gravity.START
+                        params.leftMargin = (startLeftMargin + dx.toInt()).coerceIn(0, maxLeft)
+                        params.topMargin = (startTopMargin + dy.toInt()).coerceIn(0, maxTop)
+                        params.rightMargin = 0
+                        params.bottomMargin = 0
+                        view.layoutParams = params
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!dragging) showFirstWarning(activity)
+                        dragging = false
+                        return true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        dragging = false
+                        return true
+                    }
+                }
+                return false
+            }
+        })
     }
 
     private fun showFirstWarning(activity: Activity) {
