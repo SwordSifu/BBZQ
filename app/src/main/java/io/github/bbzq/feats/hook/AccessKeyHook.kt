@@ -1,48 +1,88 @@
 package io.github.bbzq.feats.hook
 
+import android.content.Context
 import io.github.bbzq.AccessKeyRepository
 import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.RoamingEnv
-import io.github.bbzq.feats.symbol.RestoredAccountSymbols
-import kotlin.LazyThreadSafetyMode
+import io.github.bbzq.feats.allMethods
+import io.github.bbzq.feats.findClassOrNull
+import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 
 class AccessKeyHook(env: RoamingEnv) : BaseRoamingHook(env) {
-    private val accountSymbols: RestoredAccountSymbols? by lazy(LazyThreadSafetyMode.NONE) {
-        env.symbols?.account?.restore(classLoader)
-    }
 
     override fun startHook() {
         if (env.processName != env.packageName) return
-        if (accountSymbols == null) {
-            log("AccessKeyHook skipped: symbols missing")
-            return
-        }
 
         AccessKeyRepository.register {
-            runCatching { getAccessKey() }
+            runCatching { readAccessKey() }
                 .onFailure { log("AccessKey read failed", it) }
                 .getOrNull()
         }
         log("AccessKeyHook installed")
     }
 
-    private fun getAccessKey(): String? {
-        val symbols = accountSymbols ?: return null
+    private fun readAccessKey(): String? {
+        val accountClass = ACCOUNT_CLASS_NAMES.firstNotNullOfOrNull(classLoader::findClassOrNull) ?: run {
+            log("AccessKey: BiliAccounts class not found")
+            return null
+        }
+
+        val getMethod = accountClass.findAccountGetter() ?: run {
+            log("AccessKey: static getter not found on ${accountClass.name}")
+            return null
+        }
         val account = runCatching {
-            val args = if (symbols.getMethod.parameterCount == 0) {
-                emptyArray()
-            } else {
-                arrayOf(env.hostContext)
-            }
-            symbols.getMethod.invoke(null, *args)
-        }.onFailure {
-            log("AccessKey invoke account factory failed: ${symbols.accountClass.name}.${symbols.getMethod.name}", it)
+            val args = if (getMethod.parameterCount == 0) emptyArray() else arrayOf<Any?>(env.hostContext)
+            getMethod.invoke(null, *args)
         }.getOrNull() ?: return null
 
-        return runCatching {
-            symbols.accessKeyMethod.invoke(account) as? String
-        }.onFailure {
-            log("AccessKey invoke method failed: ${account.javaClass.name}.${symbols.accessKeyMethod.name}", it)
-        }.getOrNull()?.takeIf { AccessKeyRepository.looksLikeAccessKey(it) }
+        val accessKeyMethod = accountClass.findAccessKeyMethod() ?: run {
+            log("AccessKey: getAccessKey method not found on ${accountClass.name}")
+            return null
+        }
+        return (accessKeyMethod.invoke(account) as? String)
+            ?.takeIf(AccessKeyRepository::looksLikeAccessKey)
+    }
+
+    private fun Class<*>.findAccountGetter(): Method? =
+        allMethods()
+            .filter { method ->
+                Modifier.isStatic(method.modifiers) &&
+                    method.returnType == this &&
+                    (method.parameterCount == 0 || method.hasContextParameter())
+            }
+            .sortedWith(compareBy<Method> { if (it.name == "get") 0 else 1 }.thenBy { it.parameterCount })
+            .firstOrNull()
+            ?.apply { isAccessible = true }
+
+    private fun Class<*>.findAccessKeyMethod(): Method? =
+        allMethods()
+            .filter { method ->
+                !Modifier.isStatic(method.modifiers) &&
+                    method.parameterCount == 0 &&
+                    method.returnType == String::class.java
+            }
+            .sortedWith(
+                compareBy<Method> {
+                    when (it.name) {
+                        "getAccessKey" -> 0
+                        "accessKey" -> 1
+                        else -> 2
+                    }
+                }.thenBy { it.name },
+            )
+            .firstOrNull { it.name.contains("access", ignoreCase = true) }
+            ?.apply { isAccessible = true }
+
+    private fun Method.hasContextParameter(): Boolean =
+        parameterCount == 1 && Context::class.java.isAssignableFrom(parameterTypes[0])
+
+    private companion object {
+        private val ACCOUNT_CLASS_NAMES = arrayOf(
+            "com.bilibili.lib.accounts.BiliAccounts",
+            "com.bilibili.app.accounts.BiliAccounts",
+            "com.bilibili.p4439app.accounts.BiliAccounts",
+        )
     }
 }
