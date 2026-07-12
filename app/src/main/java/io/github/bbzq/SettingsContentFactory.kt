@@ -748,6 +748,12 @@ class SettingsContentFactory(
                 ModuleSettings.KEY_UNLOCK_HIGHEST_BITRATE_ENABLED,
                 false,
             )
+            rows += createSwitchRow(
+                context.getString(R.string.avoid_hdr_dolby_title),
+                context.getString(R.string.avoid_hdr_dolby_summary),
+                ModuleSettings.KEY_AVOID_HDR_DOLBY_ENABLED,
+                false,
+            )
         }
         return rows
     }

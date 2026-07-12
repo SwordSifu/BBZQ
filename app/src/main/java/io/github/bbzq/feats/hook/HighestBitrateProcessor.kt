@@ -2,26 +2,19 @@ package io.github.bbzq.feats.hook
 
 import io.github.bbzq.feats.allMethods
 import io.github.bbzq.feats.callMethod
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Request/response policy used by the single PlayView hook pipeline. */
 internal class HighestBitrateProcessor(
     private val reportFailure: (String, Throwable) -> Unit,
 ) {
-    private val forceNextHighestRequest = AtomicBoolean(false)
-    private val awaitingHighestResponse = AtomicBoolean(false)
-
-    fun requestHighestQuality() {
-        forceNextHighestRequest.set(true)
-    }
+    /** When true, skip HDR (125) and Dolby Vision (126) tiers when picking the target quality. */
+    var avoidHdrDolby: Boolean = false
 
     fun prepareRequest(request: Any?) {
         if (request == null) return
         runCatching {
-            val forceHighest = forceNextHighestRequest.getAndSet(false)
-            if (forceHighest) awaitingHighestResponse.set(true)
-            enableAllVideoCapabilities(request, forceHighest)
-            enableAllVideoCapabilities(request.callMethod("getVod"), forceHighest)
+            enableAllVideoCapabilities(request)
+            enableAllVideoCapabilities(request.callMethod("getVod"))
         }.onFailure { reportFailure("request preparation failed at ${request.javaClass.name}", it) }
     }
 
@@ -30,36 +23,40 @@ internal class HighestBitrateProcessor(
         return runCatching {
             val videoInfo = response.callMethod("getVideoInfo")
             val vodInfo = response.callMethod("getVodInfo")
-            val selectHighest = awaitingHighestResponse.getAndSet(false)
-            reorderStreams(videoInfo, selectHighest)
-            reorderStreams(vodInfo, selectHighest)
+            reorderStreams(videoInfo)
+            reorderStreams(vodInfo)
             readSelectedStats(vodInfo) ?: readSelectedStats(videoInfo)
         }.onFailure {
             reportFailure("response selection failed at ${response.javaClass.name}", it)
         }.getOrNull()
     }
 
-    private fun enableAllVideoCapabilities(target: Any?, forceHighest: Boolean) {
+    private fun enableAllVideoCapabilities(target: Any?) {
         if (target == null) return
         invokeNumber(target, "setFnval", MAX_FNVAL.toLong())
         invokeOneArg(target, "setFourk", true)
-        if (forceHighest) invokeNumber(target, "setQn", HIGHEST_QN)
+        // Always request the ceiling qn so the server returns 8K/HDR when available;
+        // it clamps down to the highest tier the account is entitled to.
+        invokeNumber(target, "setQn", HIGHEST_QN)
     }
 
-    private fun reorderStreams(container: Any?, selectHighest: Boolean) {
+    private fun reorderStreams(container: Any?) {
         if (container == null) return
         val original = (container.callMethod("getStreamListList") as? Iterable<*>)
             ?.filterNotNull()
             .orEmpty()
         if (original.size < 2) return
 
-        if (selectHighest) {
-            original.asSequence()
-                .filter { it.callMethod("getDashVideo") != null }
-                .mapNotNull { stream -> stream.callMethod("getStreamInfo")?.let { number(it, "getQuality") } }
-                .maxOrNull()
-                ?.let { highestQuality -> invokeNumber(container, "setQuality", highestQuality) }
-        }
+        // Promote the most-preferred available tier as the selected quality. The order mirrors
+        // the reference script's QUALITY_ORDER (8K > 杜比视界 > HDR > 4K > 1080P高码率 > 1080P60 > …)
+        // rather than a raw numeric max, so e.g. 1080P高码率(112) wins over 1080P60(116). When
+        // avoidHdrDolby is set, HDR/Dolby Vision tiers are skipped (8K stays, it is not HDR).
+        original.asSequence()
+            .filter { it.callMethod("getDashVideo") != null }
+            .mapNotNull { stream -> stream.callMethod("getStreamInfo")?.let { number(it, "getQuality") } }
+            .filter { !avoidHdrDolby || (it != QN_HDR && it != QN_DOLBY_VISION) }
+            .minByOrNull(::preferenceRank)
+            ?.let { preferredQuality -> invokeNumber(container, "setQuality", preferredQuality) }
 
         // Only compare equivalent representations. Comparing AVC and AV1 bandwidth directly,
         // for example, would prefer the less efficient codec rather than the better picture.
@@ -192,6 +189,10 @@ internal class HighestBitrateProcessor(
         }
     }
 
+    // Lower is more preferred; unknown qn values rank last
+    private fun preferenceRank(qn: Long): Int =
+        QN_PREFERENCE.indexOf(qn).let { if (it >= 0) it else Int.MAX_VALUE }
+
     private fun number(target: Any, getter: String): Long? =
         (target.callMethod(getter) as? Number)?.toLong()
 
@@ -242,7 +243,15 @@ internal class HighestBitrateProcessor(
     private companion object {
         // DASH, HDR, Dolby, 8K and AV1 capability bits used by current Bilibili clients.
         const val MAX_FNVAL = 16 or 64 or 128 or 256 or 512 or 1024 or 2048
+
+        // Ceiling qn requested from the server (8K). The server clamps it down to the highest tier the account/video actually supports.
         const val HIGHEST_QN = 127L
+        const val QN_HDR = 125L
+        const val QN_DOLBY_VISION = 126L
+
+        // Quality preference from best to worst, mirroring the reference script's QUALITY_ORDER.
+        // 8K(127) > 杜比视界(126) > HDR(125) > 4K(120) > 1080P高码率(112) > 1080P60(116) > 1080P(80) > 720P60(74) > 720P(64) > 480P(32) > 360P(16).
+        val QN_PREFERENCE = longArrayOf(127, 126, 125, 120, 112, 116, 80, 74, 64, 32, 16)
     }
 }
 

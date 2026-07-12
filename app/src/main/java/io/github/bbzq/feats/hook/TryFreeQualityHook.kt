@@ -33,6 +33,7 @@ class TryFreeQualityHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingHook
             return
         }
         if (highestBitrateEnabled) {
+            highestBitrate.avoidHdrDolby = ModuleSettings.isAvoidHdrDolbyEnabled(prefs)
             (env.hostContext as? Application)?.let { application ->
                 statsOverlay = VideoStatsOverlayController(
                     application = application,
