@@ -135,6 +135,7 @@ class BbzqModule : XposedModule() {
             "com.bilibili.app.blue",
             "top.nkbe.npatch",
             "com.wo.voice2",
+            "org.readera",
         )
 
         private val currentApplicationMethod: java.lang.reflect.Method by lazy(LazyThreadSafetyMode.NONE) {

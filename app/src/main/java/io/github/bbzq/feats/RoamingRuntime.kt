@@ -39,6 +39,7 @@ import io.github.bbzq.feats.hook.FullNumberFormatHook
 import io.github.bbzq.feats.hook.MineProfileHook
 import io.github.bbzq.feats.hook.PlayerUiHook
 import io.github.bbzq.feats.hook.TripleSpeedHook
+import io.github.bbzq.feats.hook.ReadEraHook
 import io.github.bbzq.feats.hook.WoMicHook
 import io.github.bbzq.feats.symbol.BiliHookSymbols
 import io.github.bbzq.feats.symbol.BiliSymbolResolver
@@ -75,6 +76,16 @@ object RoamingRuntime {
             runCatching { woMicHook.startHook() }
                 .onFailure { env.log("WoMicHook failed", it) }
             env.log("BBZQ runtime installed WoMic hook(s)")
+            return
+        }
+
+        if (packageName == READERA_PACKAGE) {
+            env.log("BBZQ runtime starting for $packageName (ReadEra mode)")
+            ModuleSettingsBridge.attach(env.hostContext, xposed)
+            val readEraHook = ReadEraHook(env)
+            runCatching { readEraHook.startHook() }
+                .onFailure { env.log("ReadEraHook failed", it) }
+            env.log("BBZQ runtime installed ReadEra hook(s)")
             return
         }
 
@@ -181,6 +192,7 @@ object RoamingRuntime {
     }
 
     private const val WO_MIC_PACKAGE = "com.wo.voice2"
+    private const val READERA_PACKAGE = "org.readera"
 }
 
 class RoamingEnv(

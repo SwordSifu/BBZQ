@@ -11,6 +11,7 @@
         <package android:name="tv.danmaku.bili" />
         <package android:name="com.bilibili.app.blue" />
         <package android:name="com.wo.voice2" />
+        <package android:name="org.readera" />
     </queries>
 
     <application
@@ -37,6 +38,10 @@
 
         <activity
             android:name=".WoMicIntroActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ReadEraIntroActivity"
             android:exported="false" />
 
         <activity
