@@ -324,5 +324,5 @@
     <string name="playback_portrait_control_title">屏蔽播放器竖屏控件</string>
     <string name="playback_portrait_control_summary">隐藏播放器控制层中的“竖屏”切换按钮。需重启哔哩哔哩后生效。</string>
     <string name="playback_triple_speed_title">解锁播放器 3 倍速</string>
-    <string name="playback_triple_speed_summary">3 倍速是服务端灰度 A/B 实验，开启后强制进入实验组，倍速菜单新增 3.0X 档位。需重启哔哩哔哩后生效。</string>
+    <string name="playback_triple_speed_summary">3 倍速是服务端灰度 A/B 实验，开启后强制进入实验组，倍速菜单新增 3.0X 档位並去除原有的 50 帧限制。需重启哔哩哔哩后生效。</string>
 </resources>

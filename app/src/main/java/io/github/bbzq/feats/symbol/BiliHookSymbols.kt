@@ -84,7 +84,7 @@ data class BiliHookSymbols(
         .putOpt("tripleSpeed", tripleSpeed?.toJson())
 
     companion object {
-        const val CACHE_SCHEMA_VERSION = 29
+        const val CACHE_SCHEMA_VERSION = 30
 
         fun fromJson(raw: String?): BiliHookSymbols? {
             if (raw.isNullOrBlank()) return null
@@ -134,7 +134,7 @@ data class BiliHookSymbols(
 }
 
 object DexKitRuleVersions {
-    const val CURRENT = 46
+    const val CURRENT = 47
 }
 
 data class HookPointStatus(
@@ -1883,20 +1883,31 @@ data class ConstructorDescriptor(
 
 data class TripleSpeedSymbols(
     val experimentReaderMethod: MethodDescriptor,
+    val qualitySpeedResetMethod: MethodDescriptor? = null,
+    val highFrameRateSpeedGuardMethod: MethodDescriptor? = null,
     val evidence: String,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("experimentReaderMethod", experimentReaderMethod.toJson())
+        .putOpt("qualitySpeedResetMethod", qualitySpeedResetMethod?.toJson())
+        .putOpt("highFrameRateSpeedGuardMethod", highFrameRateSpeedGuardMethod?.toJson())
         .put("evidence", evidence)
 
     fun restore(classLoader: ClassLoader): RestoredTripleSpeedSymbols? {
         val method = experimentReaderMethod.restoreOptional(classLoader) ?: return null
-        return RestoredTripleSpeedSymbols(method)
+        return RestoredTripleSpeedSymbols(
+            experimentReaderMethod = method,
+            qualitySpeedResetMethod = qualitySpeedResetMethod.restoreOptional(classLoader),
+            highFrameRateSpeedGuardMethod = highFrameRateSpeedGuardMethod.restoreOptional(classLoader),
+        )
     }
 
     companion object {
         fun fromJson(obj: JSONObject): TripleSpeedSymbols = TripleSpeedSymbols(
             experimentReaderMethod = MethodDescriptor.fromJson(obj.getJSONObject("experimentReaderMethod")),
+            qualitySpeedResetMethod = obj.optJSONObject("qualitySpeedResetMethod")?.let(MethodDescriptor::fromJson),
+            highFrameRateSpeedGuardMethod = obj.optJSONObject("highFrameRateSpeedGuardMethod")
+                ?.let(MethodDescriptor::fromJson),
             evidence = obj.optString("evidence", "-"),
         )
     }
@@ -1904,6 +1915,8 @@ data class TripleSpeedSymbols(
 
 data class RestoredTripleSpeedSymbols(
     val experimentReaderMethod: Method,
+    val qualitySpeedResetMethod: Method?,
+    val highFrameRateSpeedGuardMethod: Method?,
 )
 
 data class MethodDescriptor(
