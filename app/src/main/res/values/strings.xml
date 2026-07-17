@@ -126,6 +126,7 @@
     <string name="section_home_recommend_purify">主页推荐</string>
     <string name="section_ui_customize">主页外观</string>
     <string name="section_dynamic_page">动态页</string>
+    <string name="section_search_purify">搜索净化</string>
     <string name="section_playback_purify">播放页</string>
     <string name="section_comment_purify">评论区</string>
     <string name="section_mine_customize">我的页</string>
@@ -140,6 +141,14 @@
     <string name="copy_disable_summary">禁用应用内各处的长按直接复制行为，防止误触。</string>
     <string name="copy_enhance_title">长按自由复制</string>
     <string name="copy_enhance_summary">需先开启“去除长按复制”，拦截复制动作并弹出文本选择窗口。</string>
+
+    <!-- 搜索净化 -->
+    <string name="search_purify_hot_title">移除热搜榜</string>
+    <string name="search_purify_hot_summary">隐藏搜索界面的热搜榜列表。</string>
+    <string name="search_purify_recommend_title">移除搜索推荐</string>
+    <string name="search_purify_recommend_summary">隐藏搜索界面的「大家都在搜」等推荐内容。</string>
+    <string name="search_purify_history_title">移除搜索历史</string>
+    <string name="search_purify_history_summary">隐藏搜索界面的历史搜索记录列表。</string>
 
     <!-- 启动 -->
     <string name="startup_skip_splash_title">跳过开屏广告</string>

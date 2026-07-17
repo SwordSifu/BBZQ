@@ -1,4 +1,4 @@
-﻿package io.github.bbzq
+package io.github.bbzq
 
 import android.content.SharedPreferences
 
@@ -66,6 +66,9 @@ object ModuleSettings {
     const val KEY_HIDE_HOME_TOP_BAR_PROMOTION_ENABLED = "hide_home_top_bar_promotion_enabled"
     const val KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED = "hide_home_search_default_word_enabled"
     const val KEY_FULL_NUMBER_FORMAT_ENABLED = "full_number_format_enabled"
+    const val KEY_PURIFY_SEARCH_HOT_ENABLED = "purify_search_hot_enabled"
+    const val KEY_PURIFY_SEARCH_RECOMMEND_ENABLED = "purify_search_recommend_enabled"
+    const val KEY_PURIFY_SEARCH_HISTORY_ENABLED = "purify_search_history_enabled"
     const val KEY_UNLOCK_COMMENT_GIF_ENABLED = "unlock_comment_gif_enabled"
     const val KEY_LAST_ACCESS_KEY = "last_access_key"
     const val KEY_HOST_ACCOUNT_UID = "host_account_uid"
@@ -261,6 +264,9 @@ object ModuleSettings {
         ExportableConfigSpec(KEY_COMMENT_NO_OPERATION, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_OPERATION, false) },
         ExportableConfigSpec(KEY_MINE_REMOVE_VIP, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINE_REMOVE_VIP, false) },
         ExportableConfigSpec(KEY_MINE_KEEP_VIP_SPACE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINE_KEEP_VIP_SPACE, false) },
+        ExportableConfigSpec(KEY_PURIFY_SEARCH_HOT_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_HOT_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_SEARCH_HISTORY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_HISTORY_ENABLED, false) },
     )
 
     val exportableManualSpecs = buildList<ExportableConfigSpec> {
@@ -563,6 +569,15 @@ object ModuleSettings {
 
     fun isFullNumberFormatEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_FULL_NUMBER_FORMAT_ENABLED, false)
+
+    fun isPurifySearchHotEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_PURIFY_SEARCH_HOT_ENABLED, false)
+
+    fun isPurifySearchRecommendEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, false)
+
+    fun isPurifySearchHistoryEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_PURIFY_SEARCH_HISTORY_ENABLED, false)
 
     fun isUnlockCommentGifEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_UNLOCK_COMMENT_GIF_ENABLED, false)
