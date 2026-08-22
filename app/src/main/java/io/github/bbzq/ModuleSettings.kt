@@ -1,5 +1,6 @@
 package io.github.bbzq
 
+import android.content.Context
 import android.content.SharedPreferences
 
 object ModuleSettings {
@@ -27,7 +28,10 @@ object ModuleSettings {
     const val KEY_PLAYER_TRANSPARENT_STATUS_BAR_ENABLED = "player_transparent_status_bar_enabled"
     const val KEY_HIDE_PLAYER_PORTRAIT_CONTROL_ENABLED = "hide_player_portrait_control_enabled"
     const val KEY_PLAYER_TRIPLE_SPEED_ENABLED = "player_triple_speed_enabled"
+    const val KEY_PLAYER_LONG_PRESS_SPEED_LOCK_ENABLED = "player_long_press_speed_lock_enabled"
     const val KEY_FIX_LIVE_QUALITY_URL_ENABLED = "fix_live_quality_url_enabled"
+    const val KEY_CUSTOM_CDN_ENABLED = "custom_cdn_enabled"
+    const val KEY_CUSTOM_CDN_HOST = "custom_cdn_host"
     const val KEY_PURIFY_HOME_RECOMMEND_AD_ENABLED = "purify_home_recommend_ad_enabled"
     const val KEY_PURIFY_HOME_RECOMMEND_PICTURE_ENABLED = "purify_home_recommend_picture_enabled"
     const val KEY_PURIFY_HOME_RECOMMEND_GAME_PROMO_ENABLED = "purify_home_recommend_game_promo_enabled"
@@ -42,6 +46,10 @@ object ModuleSettings {
     const val KEY_CUSTOM_HOME_RECOMMEND_TAB_FILTER_ENABLED = "custom_home_recommend_tab_filter_enabled"
     const val KEY_HIDDEN_HOME_RECOMMEND_TABS = "hidden_home_recommend_tabs"
     const val KEY_KNOWN_HOME_RECOMMEND_TABS = "known_home_recommend_tabs"
+    const val KEY_CUSTOM_VIDEO_DETAIL_RELATE_FILTER_ENABLED = "custom_video_detail_relate_filter_enabled"
+    const val KEY_HIDDEN_VIDEO_DETAIL_RELATE_TYPES = "hidden_video_detail_relate_types"
+    const val KEY_KNOWN_VIDEO_DETAIL_RELATE_TYPES = "known_video_detail_relate_types"
+    const val KEY_VIDEO_DETAIL_RELATE_TITLE_KEYWORDS = "video_detail_relate_title_keywords"
     const val KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED = "hide_all_home_components_enabled"
     const val KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED = "custom_home_component_hide_enabled"
     const val KEY_HIDDEN_HOME_COMPONENTS = "hidden_home_components"
@@ -61,14 +69,20 @@ object ModuleSettings {
     const val KEY_DISABLE_LONG_PRESS_COPY_ENABLED = "disable_long_press_copy_enabled"
     const val KEY_ENHANCE_LONG_PRESS_COPY_ENABLED = "enhance_long_press_copy_enabled"
     const val KEY_CUSTOM_BOTTOM_BAR_ENABLED = "custom_bottom_bar_enabled"
+    const val KEY_CUSTOM_THEME_ENABLED = "custom_theme_enabled"
+    const val KEY_CUSTOM_THEME_COLOR = "custom_theme_color"
+    const val KEY_CUSTOM_SKIN_ENABLED = "custom_skin_enabled"
+    const val KEY_CUSTOM_SKIN_JSON = "custom_skin_json"
+    const val KEY_BLOCK_ACTIVITY_META_STICKER_ENABLED = "block_activity_meta_sticker_enabled"
+    const val DEFAULT_CUSTOM_THEME_COLOR = 0xFFFB7299.toInt()
     const val KEY_HIDDEN_BOTTOM_BAR_ITEMS = "hidden_bottom_bar_items"
     const val KEY_KNOWN_BOTTOM_BAR_ITEMS = "known_bottom_bar_items"
     const val KEY_HIDE_HOME_TOP_BAR_PROMOTION_ENABLED = "hide_home_top_bar_promotion_enabled"
     const val KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED = "hide_home_search_default_word_enabled"
-    const val KEY_FULL_NUMBER_FORMAT_ENABLED = "full_number_format_enabled"
     const val KEY_PURIFY_SEARCH_HOT_ENABLED = "purify_search_hot_enabled"
     const val KEY_PURIFY_SEARCH_RECOMMEND_ENABLED = "purify_search_recommend_enabled"
     const val KEY_PURIFY_SEARCH_HISTORY_ENABLED = "purify_search_history_enabled"
+    const val KEY_FULL_NUMBER_FORMAT_ENABLED = "full_number_format_enabled"
     const val KEY_UNLOCK_COMMENT_GIF_ENABLED = "unlock_comment_gif_enabled"
     const val KEY_LAST_ACCESS_KEY = "last_access_key"
     const val KEY_HOST_ACCOUNT_UID = "host_account_uid"
@@ -83,8 +97,17 @@ object ModuleSettings {
     const val KEY_COMMENT_NO_EMPTY_PAGE = "vid_comment_no_empty_page"
     const val KEY_COMMENT_NO_QOE = "vid_comment_no_qoe"
     const val KEY_COMMENT_NO_OPERATION = "vid_comment_no_operation"
+    const val KEY_COMMENT_KEYWORD_FILTER_ENABLED = "vid_comment_keyword_filter_enabled"
+    const val KEY_COMMENT_KEYWORDS = "vid_comment_keywords"
+    const val KEY_COMMENT_MIN_LEVEL_ENABLED = "vid_comment_min_level_enabled"
+    const val KEY_COMMENT_MIN_LEVEL = "vid_comment_min_level"
+    const val MAX_COMMENT_KEYWORDS = 64
+    const val DEFAULT_COMMENT_MIN_LEVEL = 3
     const val KEY_MINE_REMOVE_VIP = "mine_remove_vip"
     const val KEY_MINE_KEEP_VIP_SPACE = "mine_keep_vip_space"
+    const val KEY_CUSTOM_MINE_COMPONENT_HIDE_ENABLED = "custom_mine_component_hide_enabled"
+    const val KEY_HIDDEN_MINE_COMPONENTS = "hidden_mine_components"
+    const val KEY_KNOWN_MINE_COMPONENTS = "known_mine_components"
     const val MAX_HOME_RECOMMEND_TITLE_KEYWORDS = 64
 
     const val HOME_RECOMMEND_FILTER_AD = "ad"
@@ -167,6 +190,10 @@ object ModuleSettings {
     private var knownHomeRecommendTabsCache: Set<String>? = null
     @Volatile
     private var knownHomeComponentsCache: Set<String>? = null
+    @Volatile
+    private var knownMineComponentsCache: Set<String>? = null
+    @Volatile
+    private var knownVideoDetailRelateTypesCache: Set<String>? = null
 
     enum class ExportableValueType {
         BOOLEAN,
@@ -213,6 +240,7 @@ object ModuleSettings {
             it.getBoolean(KEY_PLAYER_TRIPLE_SPEED_ENABLED, false)
         },
         ExportableConfigSpec(KEY_FIX_LIVE_QUALITY_URL_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_FIX_LIVE_QUALITY_URL_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_CDN_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_CDN_ENABLED, false) },
         ExportableConfigSpec(KEY_PURIFY_HOME_RECOMMEND_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_HOME_RECOMMEND_AD_ENABLED, false) },
         ExportableConfigSpec(KEY_PURIFY_HOME_RECOMMEND_PICTURE_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_HOME_RECOMMEND_PICTURE_ENABLED, false) },
         ExportableConfigSpec(KEY_PURIFY_HOME_RECOMMEND_GAME_PROMO_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_HOME_RECOMMEND_GAME_PROMO_ENABLED, false) },
@@ -229,6 +257,7 @@ object ModuleSettings {
         },
         ExportableConfigSpec(KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED, false) },
         ExportableConfigSpec(KEY_CUSTOM_HOME_RECOMMEND_TAB_FILTER_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_HOME_RECOMMEND_TAB_FILTER_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_VIDEO_DETAIL_RELATE_FILTER_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_VIDEO_DETAIL_RELATE_FILTER_ENABLED, false) },
         ExportableConfigSpec(KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED, false) },
         ExportableConfigSpec(KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED, false) },
         ExportableConfigSpec(KEY_PURIFY_STORY_VIDEO_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_STORY_VIDEO_AD_ENABLED, false) },
@@ -248,8 +277,14 @@ object ModuleSettings {
         ExportableConfigSpec(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, false) },
         ExportableConfigSpec(KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, false) },
         ExportableConfigSpec(KEY_CUSTOM_BOTTOM_BAR_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_BOTTOM_BAR_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_THEME_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_THEME_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_SKIN_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_SKIN_ENABLED, false) },
+        ExportableConfigSpec(KEY_BLOCK_ACTIVITY_META_STICKER_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_ACTIVITY_META_STICKER_ENABLED, false) },
         ExportableConfigSpec(KEY_HIDE_HOME_TOP_BAR_PROMOTION_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_HOME_TOP_BAR_PROMOTION_ENABLED, false) },
         ExportableConfigSpec(KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_SEARCH_HOT_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_HOT_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, false) },
+        ExportableConfigSpec(KEY_PURIFY_SEARCH_HISTORY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_HISTORY_ENABLED, false) },
         ExportableConfigSpec(KEY_FULL_NUMBER_FORMAT_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_FULL_NUMBER_FORMAT_ENABLED, false) },
         ExportableConfigSpec(KEY_UNLOCK_COMMENT_GIF_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_UNLOCK_COMMENT_GIF_ENABLED, false) },
         ExportableConfigSpec(KEY_HIDE_DESKTOP_ICON, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_HIDE_DESKTOP_ICON, false) },
@@ -262,15 +297,19 @@ object ModuleSettings {
         ExportableConfigSpec(KEY_COMMENT_NO_EMPTY_PAGE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_EMPTY_PAGE, false) },
         ExportableConfigSpec(KEY_COMMENT_NO_QOE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_QOE, false) },
         ExportableConfigSpec(KEY_COMMENT_NO_OPERATION, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_NO_OPERATION, false) },
+        ExportableConfigSpec(KEY_COMMENT_KEYWORD_FILTER_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_KEYWORD_FILTER_ENABLED, false) },
+        ExportableConfigSpec(KEY_COMMENT_MIN_LEVEL_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_COMMENT_MIN_LEVEL_ENABLED, false) },
         ExportableConfigSpec(KEY_MINE_REMOVE_VIP, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINE_REMOVE_VIP, false) },
         ExportableConfigSpec(KEY_MINE_KEEP_VIP_SPACE, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_MINE_KEEP_VIP_SPACE, false) },
-        ExportableConfigSpec(KEY_PURIFY_SEARCH_HOT_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_HOT_ENABLED, false) },
-        ExportableConfigSpec(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_RECOMMEND_ENABLED, false) },
-        ExportableConfigSpec(KEY_PURIFY_SEARCH_HISTORY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_PURIFY_SEARCH_HISTORY_ENABLED, false) },
+        ExportableConfigSpec(KEY_CUSTOM_MINE_COMPONENT_HIDE_ENABLED, ExportableValueType.BOOLEAN) {
+            it.getBoolean(KEY_CUSTOM_MINE_COMPONENT_HIDE_ENABLED, false)
+        },
     )
 
     val exportableManualSpecs = buildList<ExportableConfigSpec> {
         add(ExportableConfigSpec(KEY_HOME_RECOMMEND_TITLE_KEYWORDS, ExportableValueType.STRING) { it.getString(KEY_HOME_RECOMMEND_TITLE_KEYWORDS, "").orEmpty() })
+        add(ExportableConfigSpec(KEY_COMMENT_KEYWORDS, ExportableValueType.STRING) { it.getString(KEY_COMMENT_KEYWORDS, "").orEmpty() })
+        add(ExportableConfigSpec(KEY_COMMENT_MIN_LEVEL, ExportableValueType.INT) { getCommentMinLevel(it) })
         add(ExportableConfigSpec(KEY_CUSTOM_DOWNLOAD_CONCURRENCY, ExportableValueType.INT) { prefs ->
             prefs.getInt(KEY_CUSTOM_DOWNLOAD_CONCURRENCY, 1).coerceIn(1, 12)
         })
@@ -279,6 +318,15 @@ object ModuleSettings {
         })
         add(ExportableConfigSpec(KEY_STORY_VIDEO_COMPONENT_ALPHA, ExportableValueType.INT) { prefs ->
             getStoryVideoComponentAlphaPercent(prefs)
+        })
+        add(ExportableConfigSpec(KEY_CUSTOM_THEME_COLOR, ExportableValueType.INT) { prefs ->
+            getCustomThemeColor(prefs)
+        })
+        add(ExportableConfigSpec(KEY_CUSTOM_SKIN_JSON, ExportableValueType.STRING) { prefs ->
+            getCustomSkinJson(prefs)
+        })
+        add(ExportableConfigSpec(KEY_CUSTOM_CDN_HOST, ExportableValueType.STRING) { prefs ->
+            getCustomCdnHost(prefs)
         })
         add(ExportableConfigSpec(KEY_HIDDEN_HOME_RECOMMEND_ITEMS, ExportableValueType.STRING_SET) {
             it.getStringSet(KEY_HIDDEN_HOME_RECOMMEND_ITEMS, emptySet<String>())?.toSet() ?: emptySet<String>()
@@ -289,8 +337,17 @@ object ModuleSettings {
         add(ExportableConfigSpec(KEY_HIDDEN_HOME_COMPONENTS, ExportableValueType.STRING_SET) {
             it.getStringSet(KEY_HIDDEN_HOME_COMPONENTS, emptySet<String>())?.toSet() ?: emptySet<String>()
         })
+        add(ExportableConfigSpec(KEY_HIDDEN_MINE_COMPONENTS, ExportableValueType.STRING_SET) {
+            it.getStringSet(KEY_HIDDEN_MINE_COMPONENTS, emptySet<String>())?.toSet() ?: emptySet<String>()
+        })
         add(ExportableConfigSpec(KEY_HIDDEN_BOTTOM_BAR_ITEMS, ExportableValueType.STRING_SET) {
             it.getStringSet(KEY_HIDDEN_BOTTOM_BAR_ITEMS, emptySet<String>())?.toSet() ?: emptySet<String>()
+        })
+        add(ExportableConfigSpec(KEY_HIDDEN_VIDEO_DETAIL_RELATE_TYPES, ExportableValueType.STRING_SET) {
+            it.getStringSet(KEY_HIDDEN_VIDEO_DETAIL_RELATE_TYPES, emptySet<String>())?.toSet() ?: emptySet<String>()
+        })
+        add(ExportableConfigSpec(KEY_VIDEO_DETAIL_RELATE_TITLE_KEYWORDS, ExportableValueType.STRING) { prefs ->
+            getVideoDetailRelateTitleKeywordsText(prefs)
         })
         skipVideoAdCategories.forEach { category ->
             add(ExportableConfigSpec("$KEY_SKIP_VIDEO_AD_MODE_PREFIX${category.key}", ExportableValueType.INT) { prefs ->
@@ -333,6 +390,9 @@ object ModuleSettings {
 
     fun isPlayerTripleSpeedEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_PLAYER_TRIPLE_SPEED_ENABLED, false)
+
+    fun isPlayerLongPressSpeedLockEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_PLAYER_LONG_PRESS_SPEED_LOCK_ENABLED, false)
 
     fun isSkipVideoAdEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_SKIP_VIDEO_AD_ENABLED, false)
@@ -396,6 +456,48 @@ object ModuleSettings {
 
     fun isFixLiveQualityUrlEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_FIX_LIVE_QUALITY_URL_ENABLED, false)
+
+    /** 已知的 UPos 节点，显示名称与 PiliPlus 当前的 CDN 列表保持一致。 */
+    data class CdnEndpoint(val name: String, val host: String)
+
+    val cdnEndpoints = listOf(
+        CdnEndpoint("ali（阿里）", "upos-sz-mirrorali.bilivideo.com"),
+        CdnEndpoint("alib（阿里）", "upos-sz-mirroralib.bilivideo.com"),
+        CdnEndpoint("alio1（阿里）", "upos-sz-mirroralio1.bilivideo.com"),
+        CdnEndpoint("bos（百度）", "upos-sz-mirrorbos.bilivideo.com"),
+        CdnEndpoint("cos（腾讯）", "upos-sz-mirrorcos.bilivideo.com"),
+        CdnEndpoint("cosb（腾讯）", "upos-sz-mirrorcosb.bilivideo.com"),
+        CdnEndpoint("coso1（腾讯）", "upos-sz-mirrorcoso1.bilivideo.com"),
+        CdnEndpoint("hw（华为）", "upos-sz-mirrorhw.bilivideo.com"),
+        CdnEndpoint("hwb（华为）", "upos-sz-mirrorhwb.bilivideo.com"),
+        CdnEndpoint("hwo1（华为）", "upos-sz-mirrorhwo1.bilivideo.com"),
+        CdnEndpoint("08c（华为）", "upos-sz-mirror08c.bilivideo.com"),
+        CdnEndpoint("08h（华为）", "upos-sz-mirror08h.bilivideo.com"),
+        CdnEndpoint("08ct（华为）", "upos-sz-mirror08ct.bilivideo.com"),
+        CdnEndpoint("tf_hw（华为）", "upos-tf-all-hw.bilivideo.com"),
+        CdnEndpoint("tf_tx（腾讯）", "upos-tf-all-tx.bilivideo.com"),
+        CdnEndpoint("akamai（海外）", "upos-hz-mirrorakam.akamaized.net"),
+        CdnEndpoint("aliov（阿里海外）", "upos-sz-mirroraliov.bilivideo.com"),
+        CdnEndpoint("cosov（腾讯海外）", "upos-sz-mirrorcosov.bilivideo.com"),
+        CdnEndpoint("hwov（华为海外）", "upos-sz-mirrorhwov.bilivideo.com"),
+        CdnEndpoint("hk_bcache（Bilibili 海外）", "cn-hk-eq-bcache-01.bilivideo.com"),
+    )
+
+    fun isCustomCdnEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_CUSTOM_CDN_ENABLED, false) && getCustomCdnHost(prefs) != null
+
+    fun getCustomCdnHost(prefs: SharedPreferences): String? =
+        normalizeCdnHost(prefs.getString(KEY_CUSTOM_CDN_HOST, null))
+
+    fun normalizeCdnHost(value: String?): String? {
+        val host = value.orEmpty().trim().removePrefix("https://").removePrefix("http://")
+            .substringBefore('/').substringBefore('?').trimEnd('/')
+        return host.takeIf {
+            it.length in 1..253 &&
+                it.none(Char::isWhitespace) &&
+                it.matches(Regex("[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?"))
+        }
+    }
 
     fun getHomeRecommendTitleKeywordsText(prefs: SharedPreferences): String =
         prefs.getString(KEY_HOME_RECOMMEND_TITLE_KEYWORDS, "").orEmpty()
@@ -490,6 +592,73 @@ object ModuleSettings {
         knownHomeComponentsCache = items.toSet()
     }
 
+    fun isCustomMineComponentHideEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_CUSTOM_MINE_COMPONENT_HIDE_ENABLED, false)
+
+    fun getHiddenMineComponents(prefs: SharedPreferences): Set<String> =
+        prefs.getStringSet(KEY_HIDDEN_MINE_COMPONENTS, emptySet()) ?: emptySet()
+
+    fun getKnownMineComponents(prefs: SharedPreferences): Set<String> =
+        knownMineComponentsCache
+            ?: prefs.getStringSet(KEY_KNOWN_MINE_COMPONENTS, emptySet())
+            ?: emptySet()
+
+    fun cacheKnownMineComponents(items: Set<String>) {
+        knownMineComponentsCache = items.toSet()
+    }
+
+    fun isCustomVideoDetailRelateFilterEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_CUSTOM_VIDEO_DETAIL_RELATE_FILTER_ENABLED, false)
+
+    fun getHiddenVideoDetailRelateTypes(prefs: SharedPreferences): Set<String> =
+        prefs.getStringSet(KEY_HIDDEN_VIDEO_DETAIL_RELATE_TYPES, emptySet()) ?: emptySet()
+
+    fun getKnownVideoDetailRelateTypes(prefs: SharedPreferences): Set<String> =
+        knownVideoDetailRelateTypesCache
+            ?: prefs.getStringSet(KEY_KNOWN_VIDEO_DETAIL_RELATE_TYPES, emptySet())
+            ?: emptySet()
+
+    fun cacheKnownVideoDetailRelateTypes(items: Set<String>) {
+        knownVideoDetailRelateTypesCache = items.toSet()
+    }
+
+    fun refreshKnownVideoDetailRelateTypesCache(prefs: SharedPreferences) {
+        knownVideoDetailRelateTypesCache = prefs.getStringSet(KEY_KNOWN_VIDEO_DETAIL_RELATE_TYPES, emptySet())?.toSet()
+    }
+
+    fun getVideoDetailRelateTitleKeywordsText(prefs: SharedPreferences): String =
+        prefs.getString(KEY_VIDEO_DETAIL_RELATE_TITLE_KEYWORDS, "")?.trim().orEmpty()
+
+    fun parseVideoDetailRelateTitleKeywords(raw: String): List<String> =
+        raw.split('\n', ',', '，')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+    fun getRelateTypeDisplayName(type: String, context: Context): String {
+        val upper = type.trim().uppercase()
+        return when (upper) {
+            "AV" -> context.getString(R.string.video_detail_relate_type_av)
+            "BANGUMI" -> context.getString(R.string.video_detail_relate_type_bangumi)
+            "RESOURCE" -> context.getString(R.string.video_detail_relate_type_resource)
+            "GAME" -> context.getString(R.string.video_detail_relate_type_game)
+            "CM" -> context.getString(R.string.video_detail_relate_type_cm)
+            "LIVE" -> context.getString(R.string.video_detail_relate_type_live)
+            "SPECIAL" -> context.getString(R.string.video_detail_relate_type_special)
+            "SPECIAL_S" -> context.getString(R.string.video_detail_relate_type_special_s)
+            "COURSE" -> context.getString(R.string.video_detail_relate_type_course)
+            "MINI_PROGRAM" -> context.getString(R.string.video_detail_relate_type_mini_program)
+            "AI_CARD", "AI_RECOMMEND" -> context.getString(R.string.video_detail_relate_type_ai_card)
+            "BANGUMI_AV" -> context.getString(R.string.video_detail_relate_type_bangumi_av)
+            "BANGUMI_SEASON" -> context.getString(R.string.video_detail_relate_type_bangumi_season)
+            "ACTIVITY" -> context.getString(R.string.video_detail_relate_type_activity)
+            "COUPON" -> context.getString(R.string.video_detail_relate_type_coupon)
+            "COMMUNITY" -> context.getString(R.string.video_detail_relate_type_community)
+            "HISTORY_AV" -> context.getString(R.string.video_detail_relate_type_history_av)
+            else -> context.getString(R.string.video_detail_relate_type_unknown, type)
+        }
+    }
+
     fun isPurifyStoryVideoAdEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_PURIFY_STORY_VIDEO_AD_ENABLED, false)
 
@@ -515,6 +684,22 @@ object ModuleSettings {
 
     fun isCustomDownloadThreadEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_CUSTOM_DOWNLOAD_THREAD_ENABLED, false)
+
+    fun isCustomThemeEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_CUSTOM_THEME_ENABLED, false)
+
+    fun getCustomThemeColor(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_CUSTOM_THEME_COLOR, DEFAULT_CUSTOM_THEME_COLOR)
+            .let { color -> (color and 0x00FFFFFF) or 0xFF000000.toInt() }
+
+    fun isCustomSkinEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_CUSTOM_SKIN_ENABLED, false)
+
+    fun isBlockActivityMetaStickerEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_BLOCK_ACTIVITY_META_STICKER_ENABLED, false)
+
+    fun getCustomSkinJson(prefs: SharedPreferences): String =
+        prefs.getString(KEY_CUSTOM_SKIN_JSON, "").orEmpty().trim()
 
     fun getCustomDownloadConcurrency(prefs: SharedPreferences): Int =
         prefs.getInt(KEY_CUSTOM_DOWNLOAD_CONCURRENCY, 1).coerceIn(1, 12)
@@ -567,9 +752,6 @@ object ModuleSettings {
     fun isHideHomeSearchDefaultWordEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_HIDE_HOME_SEARCH_DEFAULT_WORD_ENABLED, false)
 
-    fun isFullNumberFormatEnabled(prefs: SharedPreferences): Boolean =
-        prefs.getBoolean(KEY_FULL_NUMBER_FORMAT_ENABLED, false)
-
     fun isPurifySearchHotEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_PURIFY_SEARCH_HOT_ENABLED, false)
 
@@ -578,6 +760,9 @@ object ModuleSettings {
 
     fun isPurifySearchHistoryEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_PURIFY_SEARCH_HISTORY_ENABLED, false)
+
+    fun isFullNumberFormatEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_FULL_NUMBER_FORMAT_ENABLED, false)
 
     fun isUnlockCommentGifEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_UNLOCK_COMMENT_GIF_ENABLED, false)
@@ -611,6 +796,27 @@ object ModuleSettings {
 
     fun isCommentNoOperationEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_COMMENT_NO_OPERATION, false)
+
+    fun isCommentKeywordFilterEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_COMMENT_KEYWORD_FILTER_ENABLED, false)
+
+    fun getCommentKeywordsText(prefs: SharedPreferences): String =
+        prefs.getString(KEY_COMMENT_KEYWORDS, "").orEmpty()
+
+    fun parseCommentKeywords(raw: String): List<String> =
+        raw.split('\n', '\r', ',', '，', ';', '；')
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(MAX_COMMENT_KEYWORDS)
+            .toList()
+
+    fun isCommentMinLevelEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_COMMENT_MIN_LEVEL_ENABLED, false)
+
+    fun getCommentMinLevel(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_COMMENT_MIN_LEVEL, DEFAULT_COMMENT_MIN_LEVEL).coerceIn(0, 6)
 
     fun isMineRemoveVipEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_MINE_REMOVE_VIP, false)

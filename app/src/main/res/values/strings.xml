@@ -9,11 +9,10 @@
     <string name="intro_module_body">当前版本：BBZQ %1$s</string>
     <string name="intro_desc_title">模块介绍</string>
     <string name="intro_desc_body">面向哔哩哔哩客户端的轻量级 Xposed 模块，提供空降助手、功能增强及组件净化等常用功能。</string>
-    <string name="intro_entry_title">如何进入设置</string>
-    <string name="intro_entry_body">进入哔哩哔哩“设置”页面，找到“高级设置”即可进入 BBZQ 设置面板。</string>
     <string name="intro_launcher_title">桌面入口说明</string>
     <string name="intro_launcher_body">桌面图标仅用于展示模块介绍，实际功能开关仍在应用内设置页中调整。</string>
     <string name="section_about">关于</string>
+    <string name="section_video_cdn">视频 CDN</string>
 
     <!-- 設定入口 -->
     <string name="entry_title">高级设置</string>
@@ -215,6 +214,8 @@
     <string name="playback_hide_banner_summary">阻止视频详情页播放器下方横幅、推荐列表、应用下载、好物推荐和暂停广告创建。</string>
     <string name="playback_block_chronos_promotion_title">屏蔽播放互动组件</string>
     <string name="playback_block_chronos_promotion_summary">移除播放器里的投票、预约、打卡、关注引导、商业活动卡、广告浮层和商业跳转按钮。</string>
+    <string name="playback_block_activity_meta_sticker_title">屏蔽"云视听小电视"贴片</string>
+    <string name="playback_block_activity_meta_sticker_summary">移除视频播放器左上角的"云视听小电视"推广浮层贴片。</string>
     <string name="playback_skip_reward_title">跳过视频激励广告</string>
     <string name="playback_skip_reward_summary">自动尝试完成视频激励并获得奖励。</string>
     <string name="playback_auto_like_title">自动点赞视频</string>
@@ -312,12 +313,31 @@
     <string name="comment_no_qoe_summary">屏蔽评论区体验反馈和问卷弹窗。</string>
     <string name="comment_no_operation_title">移除评论区运营推广</string>
     <string name="comment_no_operation_summary">隐藏评论区顶部的运营活动和推广横幅。</string>
+    <string name="comment_keyword_filter_title">按关键词屏蔽评论</string>
+    <string name="comment_keyword_filter_summary">评论正文包含设定关键词时，隐藏该评论及其楼中楼。</string>
+    <string name="comment_keyword_row_title">评论屏蔽关键词</string>
+    <string name="comment_keyword_hint">每行一个关键词，或用逗号、分号分隔</string>
+    <string name="comment_keyword_dialog_title">评论屏蔽关键词</string>
+    <string name="comment_keyword_empty_summary">未配置关键词。开启后，正文包含关键词的评论会被隐藏。</string>
+    <string name="comment_keyword_enabled_summary">已配置 %1$d 个关键词：%2$s</string>
+    <string name="comment_min_level_switch_title">屏蔽低等级用户评论</string>
+    <string name="comment_min_level_switch_summary">隐藏发布者等级低于设定值的评论及其楼中楼。</string>
+    <string name="comment_min_level_row_title">最低显示等级</string>
+    <string name="comment_min_level_row_summary">仅显示等级 ≥ %1$d 的用户评论。</string>
+    <string name="comment_min_level_dialog_title">最低显示等级</string>
 
     <!-- 我的页 -->
     <string name="mine_remove_vip_title">隐藏大会员入口</string>
     <string name="mine_remove_vip_summary">移除“我的”页面中的大会员卡片展示。</string>
     <string name="mine_keep_vip_space_title">保留大会员占位空间</string>
     <string name="mine_keep_vip_space_summary">隐藏大会员入口时保留其占位空间，避免页面跳动。</string>
+    <string name="mine_component_hide_title">自定义隐藏我的页组件</string>
+    <string name="mine_component_hide_summary">打开“我的”页后，可按项目选择需要隐藏的服务入口。</string>
+    <string name="mine_component_title">我的页组件</string>
+    <string name="mine_component_unavailable_summary">暂无组件数据。请先打开一次哔哩哔哩“我的”页，再回来设置。</string>
+    <string name="mine_component_info_summary">勾选代表保留组件，取消勾选后将隐藏对应入口。</string>
+    <string name="mine_component_picker_title">选择要隐藏的组件</string>
+    <string name="mine_component_picker_summary">已隐藏 %1$d / %2$d 项</string>
     <string name="skip_video_ad_auto_like_disable_dialog_confirm">仍然关闭</string>
     <string name="skip_video_ad_auto_like_disable_dialog_cancel">取消</string>
     
@@ -334,4 +354,63 @@
     <string name="playback_portrait_control_summary">隐藏播放器控制层中的“竖屏”切换按钮。需重启哔哩哔哩后生效。</string>
     <string name="playback_triple_speed_title">解锁播放器 3 倍速</string>
     <string name="playback_triple_speed_summary">3 倍速是服务端灰度 A/B 实验，开启后强制进入实验组，倍速菜单新增 3.0X 档位並去除原有的 50 帧限制。需重启哔哩哔哩后生效。</string>
+    <string name="playback_long_press_speed_lock_title">长按倍速锁定</string>
+    <string name="playback_long_press_speed_lock_summary">仅横屏：长按播放时向下滑可锁定倍速；再次长按并向下滑动可解除。需重启哔哩哔哩后生效。</string>
+    <string name="custom_cdn_enabled_title">自定义视频 CDN</string>
+    <string name="custom_cdn_enabled_summary">将 DASH 视频、音频及备用 URL 改为选定的 UPos CDN；切换后请重新打开视频。</string>
+    <string name="custom_cdn_host_title">CDN 节点</string>
+    <string name="custom_cdn_host_empty_summary">尚未选择节点。请先选择内置 CDN 或输入自定义 Host。</string>
+    <string name="custom_cdn_host_current_summary">当前：%1$s</string>
+    <string name="custom_cdn_host_dialog_title">选择 CDN 节点</string>
+    <string name="custom_cdn_host_custom">输入自定义 Host</string>
+    <string name="custom_cdn_host_input_message">可输入域名（可选端口）；无需包含路径或查询参数。</string>
+    <string name="custom_cdn_host_invalid">请输入有效的 CDN Host。</string>
+    <string name="custom_theme_title">自制主题</string>
+    <string name="custom_theme_summary">在 Bilibili 主题列表中加入自定义主色主题；修改后重新进入主题页即可生效。</string>
+    <string name="custom_theme_color_title">自制主题颜色</string>
+    <string name="custom_theme_color_summary">当前颜色：%1$s</string>
+    <string name="custom_theme_color_dialog_title">自制主题颜色</string>
+    <string name="custom_theme_color_dialog_message">请输入 6 位十六进制颜色，例如 FB7299。</string>
+    <string name="custom_theme_color_invalid">请输入有效的 6 位十六进制颜色。</string>
+    <string name="custom_skin_title">自制主题</string>
+    <string name="custom_skin_summary">使用导入的主题配置；保存后重启 B 站即可套用。</string>
+    <string name="custom_skin_config_title">导入自制主题配置</string>
+    <string name="custom_skin_config_message">粘贴导出的主题 JSON 配置。</string>
+    <string name="custom_skin_config_empty">尚未导入配置</string>
+    <string name="custom_skin_config_loaded">已导入：%1$s</string>
+    <string name="custom_skin_config_invalid">配置必须是包含 package_url 的有效主题 JSON。</string>
+    <string name="custom_skin_config_copy">复制</string>
+    <string name="custom_skin_config_copied">主题配置已复制</string>
+    <string name="custom_skin_config_import_file">从文件导入</string>
+    <string name="custom_skin_config_imported">自制主题配置已导入，重启 B 站后套用。</string>
+
+    <!-- 播放页下方推荐信息流过滤 -->
+    <string name="video_detail_relate_custom_filter_title">下方推荐过滤</string>
+    <string name="video_detail_relate_custom_filter_summary">屏蔽播放页下方信息流中的指定类型卡片及标题关键词。</string>
+    <string name="video_detail_relate_title_keyword_title">推荐标题关键词屏蔽</string>
+    <string name="video_detail_relate_title_keyword_empty_summary">未设置关键词。点击添加后可按视频标题过滤推荐内容。</string>
+    <string name="video_detail_relate_title_keyword_enabled_summary">已设置 %1$d 个关键词：%2$s</string>
+    <string name="video_detail_relate_title_keyword_dialog_title">推荐标题关键词屏蔽</string>
+    <string name="video_detail_relate_title_keyword_dialog_message">输入要屏蔽的推荐标题关键词。多个关键词之间可以用回车换行或半角逗号隔开。</string>
+    <string name="video_detail_relate_custom_filter_item_title">下方推荐分类屏蔽</string>
+    <string name="video_detail_relate_custom_filter_info_summary">勾选代表屏蔽该类型卡片。前往播放页刷新后将在此显示发现的卡片类型。</string>
+    <string name="video_detail_relate_unavailable_summary">暂无卡片分类数据。开启开关并进入一次视频播放详情页后，将在此显示发现的卡片类型。</string>
+    <string name="video_detail_relate_type_av">普通视频 (AV)</string>
+    <string name="video_detail_relate_type_bangumi">番剧/影视 (Bangumi)</string>
+    <string name="video_detail_relate_type_resource">会员购/商品 (Resource)</string>
+    <string name="video_detail_relate_type_game">热门游戏 (Game)</string>
+    <string name="video_detail_relate_type_cm">商业广告 (CM)</string>
+    <string name="video_detail_relate_type_live">直播推荐 (Live)</string>
+    <string name="video_detail_relate_type_special">特殊与专题 (Special)</string>
+    <string name="video_detail_relate_type_special_s">特殊卡片 (Special S)</string>
+    <string name="video_detail_relate_type_course">课堂与课程 (Course)</string>
+    <string name="video_detail_relate_type_mini_program">小程序 (Mini Program)</string>
+    <string name="video_detail_relate_type_ai_card">AI 推荐 (AI Card)</string>
+    <string name="video_detail_relate_type_bangumi_av">番剧相关视频 (Bangumi AV)</string>
+    <string name="video_detail_relate_type_bangumi_season">番剧季推荐 (Bangumi Season)</string>
+    <string name="video_detail_relate_type_activity">活动推广 (Activity)</string>
+    <string name="video_detail_relate_type_coupon">优惠券 (Coupon)</string>
+    <string name="video_detail_relate_type_community">社区推荐 (Community)</string>
+    <string name="video_detail_relate_type_history_av">历史相关视频 (History AV)</string>
+    <string name="video_detail_relate_type_unknown">未知分类 (%1$s)</string>
 </resources>

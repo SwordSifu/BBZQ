@@ -3,7 +3,6 @@ package io.github.bbzq
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -50,12 +49,13 @@ class SettingsActivity : Activity() {
             },
             onExportClick = { launchExportConfig() },
             onImportClick = { launchImportConfig() },
+            onCustomSkinImportClick = { launchCustomSkinImport() },
         )
         contentFactory = factory
         val content = factory.createScrollView()
         val contentRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#F6F7F8"))
+            setBackgroundColor(getColor(R.color.page_background))
             addView(toolbar)
             addView(
                 content,
@@ -111,20 +111,12 @@ class SettingsActivity : Activity() {
         when (requestCode) {
             REQUEST_EXPORT_CONFIG -> data?.data?.let(::doExport)
             REQUEST_IMPORT_CONFIG -> data?.data?.let(::loadImportArchive)
+            REQUEST_IMPORT_CUSTOM_SKIN -> data?.data?.let(::loadCustomSkinFile)
         }
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        val page = intent.getStringExtra(EXTRA_PAGE) ?: PAGE_ROOT
-        if (page != PAGE_ROOT) {
-            ModuleSettingsNavigator.open(
-                context = this,
-                runtimeValues = intent.getBundleExtra(RuntimeEnvironmentInfo.EXTRA_RUNTIME_VALUES),
-                page = PAGE_ROOT,
-            )
-            return
-        }
         finish()
     }
 
@@ -166,6 +158,36 @@ class SettingsActivity : Activity() {
                 getString(R.string.config_import_failed, throwable.message ?: "無法開啟檔案選擇器"),
                 Toast.LENGTH_LONG,
             ).show()
+        }
+    }
+
+    private fun launchCustomSkinImport() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf("application/json", "application/zip", "application/x-zip-compressed", "application/octet-stream"),
+            )
+        }
+        startActivityForResult(intent, REQUEST_IMPORT_CUSTOM_SKIN)
+    }
+
+    private fun loadCustomSkinFile(uri: Uri) {
+        val result = runCatching {
+            contentResolver.openInputStream(uri)?.use { CustomSkinConfigPorter.read(it.readBytes()) }
+                ?: CustomSkinConfigPorter.Result.Failure("无法读取文件")
+        }.getOrElse { CustomSkinConfigPorter.Result.Failure(it.message ?: "无法读取文件") }
+        when (result) {
+            is CustomSkinConfigPorter.Result.Success -> {
+                prefs.edit()
+                    .putString(ModuleSettings.KEY_CUSTOM_SKIN_JSON, result.json)
+                    .putBoolean(ModuleSettings.KEY_CUSTOM_SKIN_ENABLED, true)
+                    .apply()
+                Toast.makeText(this, R.string.custom_skin_config_imported, Toast.LENGTH_SHORT).show()
+                recreate()
+            }
+            is CustomSkinConfigPorter.Result.Failure -> Toast.makeText(this, result.reason, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -265,21 +287,21 @@ class SettingsActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(getColor(R.color.toolbar_background))
             setPadding(dp(16), dp(14), dp(16), dp(14))
             elevation = dp(2).toFloat()
 
             addView(TextView(this@SettingsActivity).apply {
                 text = toolbarTitle(page)
                 textSize = 20f
-                setTextColor(Color.parseColor("#18191C"))
+                setTextColor(getColor(R.color.title_text))
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
 
             addView(TextView(this@SettingsActivity).apply {
                 text = getString(R.string.settings_done)
                 textSize = 15f
-                setTextColor(Color.parseColor("#FB7299"))
+                setTextColor(getColor(R.color.accent_pink))
                 isClickable = true
                 isFocusable = true
                 setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -363,5 +385,6 @@ class SettingsActivity : Activity() {
         const val PAGE_CONFIG_BACKUP = "config_backup"
         private const val REQUEST_EXPORT_CONFIG = 0x5001
         private const val REQUEST_IMPORT_CONFIG = 0x5002
+        private const val REQUEST_IMPORT_CUSTOM_SKIN = 0x5003
     }
 }

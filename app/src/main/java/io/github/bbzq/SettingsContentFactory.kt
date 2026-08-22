@@ -3,6 +3,7 @@ package io.github.bbzq
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
@@ -30,6 +31,7 @@ import android.widget.Toast
 import io.github.bbzq.DesktopIconHelper
 import io.github.bbzq.R
 import okhttp3.Call
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,19 +43,45 @@ class SettingsContentFactory(
     private val openPage: (String) -> Unit,
     private val onExportClick: () -> Unit,
     private val onImportClick: () -> Unit,
+    private val onCustomSkinImportClick: () -> Unit,
 ) {
+    private val pageBackgroundColor: Int by lazy { context.getColor(R.color.page_background) }
+    private val titleTextColor: Int by lazy { context.getColor(R.color.title_text) }
+    private val summaryTextColor: Int by lazy { context.getColor(R.color.summary_text) }
+    private val sectionLabelColor: Int by lazy { context.getColor(R.color.section_label) }
+    private val cardBackgroundColor: Int by lazy { context.getColor(R.color.card_background) }
+    private val dividerColor: Int by lazy { context.getColor(R.color.divider) }
+    private val disableConfirmColor: Int by lazy { context.getColor(R.color.disable_confirm) }
+    private val cancelActionColor: Int by lazy { context.getColor(R.color.cancel_action) }
     private val tagCheckBoxes = mutableMapOf<String, CheckBox>()
     private val bottomBarItemCheckBoxes = mutableMapOf<String, CheckBox>()
     private val homeRecommendItemCheckBoxes = mutableMapOf<String, CheckBox>()
     private val homeRecommendTabCheckBoxes = mutableMapOf<String, CheckBox>()
     private val homeComponentCheckBoxes = mutableMapOf<String, CheckBox>()
+    private val videoDetailRelateTypeCheckBoxes = mutableMapOf<String, CheckBox>()
     private val sponsorBlockCategoryButtons = mutableMapOf<String, Button>()
+    private lateinit var videoDetailRelateFilterSwitch: Switch
+    private lateinit var videoDetailRelateTitleKeywordRow: View
+    private lateinit var videoDetailRelateTitleKeywordSummaryView: TextView
     private lateinit var disableLongPressCopySwitch: Switch
     private lateinit var enhanceLongPressCopySwitch: Switch
     private lateinit var downloadThreadSwitch: Switch
     private lateinit var downloadConcurrencyRow: View
     private lateinit var downloadConcurrencySummary: TextView
     private lateinit var bottomBarSwitch: Switch
+    private lateinit var customThemeSwitch: Switch
+    private lateinit var customSkinSwitch: Switch
+    private lateinit var customThemeColorRow: View
+    private lateinit var customThemeColorSummary: TextView
+    private lateinit var customThemeColorSwatch: View
+    private lateinit var customSkinConfigRow: View
+    private lateinit var customSkinConfigSummary: TextView
+    private lateinit var commentKeywordFilterSwitch: Switch
+    private lateinit var commentKeywordRow: View
+    private lateinit var commentKeywordSummary: TextView
+    private lateinit var commentMinLevelSwitch: Switch
+    private lateinit var commentMinLevelRow: View
+    private lateinit var commentMinLevelSummary: TextView
     private lateinit var homeRecommendItemSwitch: Switch
     private lateinit var homeRecommendTitleKeywordRow: View
     private lateinit var homeRecommendTabSwitch: Switch
@@ -66,7 +94,11 @@ class SettingsContentFactory(
     private lateinit var storyVideoComponentAlphaSeekBar: SeekBar
     private lateinit var skipVideoAdAutoLikeSwitch: Switch
     private lateinit var blockedCountView: TextView
+    private lateinit var customMineComponentHideSwitch: Switch
+    private lateinit var mineComponentPickerRow: View
+    private lateinit var mineComponentPickerSummary: TextView
     private lateinit var symbolScanStatusSummary: TextView
+    private lateinit var customCdnHostSummary: TextView
     /** 「检查更新」行的摘要文本视图，用于回显检查状态；界面销毁时置空避免泄漏。 */
     private var updateCheckSummaryView: TextView? = null
 
@@ -82,7 +114,7 @@ class SettingsContentFactory(
     fun createScrollView(): ScrollView {
         val pageRoot = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(PAGE_BACKGROUND)
+            setBackgroundColor(pageBackgroundColor)
             setPadding(dp(12), dp(12), dp(12), dp(24))
         }
 
@@ -129,6 +161,9 @@ class SettingsContentFactory(
                 pageRoot.addView(createSectionLabel(context.getString(R.string.section_download_features)))
                 pageRoot.addView(createSectionCard(downloadRows()))
 
+                pageRoot.addView(createSectionLabel(context.getString(R.string.section_video_cdn)))
+                pageRoot.addView(createSectionCard(customCdnRows()))
+
                 pageRoot.addView(createSectionLabel(context.getString(R.string.section_home_recommend_purify)))
                 pageRoot.addView(createSectionCard(homeRecommendRows()))
 
@@ -167,7 +202,7 @@ class SettingsContentFactory(
         }
 
         return ScrollView(context).apply {
-            setBackgroundColor(PAGE_BACKGROUND)
+            setBackgroundColor(pageBackgroundColor)
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             addView(
                 pageRoot,
@@ -406,6 +441,24 @@ class SettingsContentFactory(
         ) {
             bottomBarSwitch = it
         }
+        rows += createSwitchRow(
+            context.getString(R.string.custom_theme_title),
+            context.getString(R.string.custom_theme_summary),
+            ModuleSettings.KEY_CUSTOM_THEME_ENABLED,
+            false,
+        ) {
+            customThemeSwitch = it
+        }
+        rows += createCustomThemeColorRow()
+        rows += createSwitchRow(
+            context.getString(R.string.custom_skin_title),
+            context.getString(R.string.custom_skin_summary),
+            ModuleSettings.KEY_CUSTOM_SKIN_ENABLED,
+            false,
+        ) {
+            customSkinSwitch = it
+        }
+        rows += createCustomSkinConfigRow()
 
         val items = bottomBarItems()
         if (items.isEmpty()) {
@@ -451,9 +504,37 @@ class SettingsContentFactory(
             false,
         )
         rows += createSwitchRow(
+            context.getString(R.string.video_detail_relate_custom_filter_title),
+            context.getString(R.string.video_detail_relate_custom_filter_summary),
+            ModuleSettings.KEY_CUSTOM_VIDEO_DETAIL_RELATE_FILTER_ENABLED,
+            false,
+        ) {
+            videoDetailRelateFilterSwitch = it
+        }
+        rows += createVideoDetailRelateTitleKeywordRow()
+        val relateTypes = videoDetailRelateTypes()
+        if (relateTypes.isEmpty()) {
+            rows += createInfoRow(
+                context.getString(R.string.video_detail_relate_custom_filter_item_title),
+                context.getString(R.string.video_detail_relate_unavailable_summary),
+            )
+        } else {
+            rows += createInfoRow(
+                context.getString(R.string.video_detail_relate_custom_filter_item_title),
+                context.getString(R.string.video_detail_relate_custom_filter_info_summary),
+            )
+            rows += createVideoDetailRelateTypeGroup(relateTypes)
+        }
+        rows += createSwitchRow(
             context.getString(R.string.playback_block_chronos_promotion_title),
             context.getString(R.string.playback_block_chronos_promotion_summary),
             ModuleSettings.KEY_BLOCK_CHRONOS_PROMOTION_ENABLED,
+            false,
+        )
+        rows += createSwitchRow(
+            context.getString(R.string.playback_block_activity_meta_sticker_title),
+            context.getString(R.string.playback_block_activity_meta_sticker_summary),
+            ModuleSettings.KEY_BLOCK_ACTIVITY_META_STICKER_ENABLED,
             false,
         )
         rows += createSwitchRow(
@@ -486,11 +567,45 @@ class SettingsContentFactory(
             ModuleSettings.KEY_PLAYER_TRIPLE_SPEED_ENABLED,
             false,
         )
+        rows += createSwitchRow(
+            context.getString(R.string.playback_long_press_speed_lock_title),
+            context.getString(R.string.playback_long_press_speed_lock_summary),
+            ModuleSettings.KEY_PLAYER_LONG_PRESS_SPEED_LOCK_ENABLED,
+            false,
+        )
         return rows
     }
 
+    private fun customCdnRows(): List<View> = listOf(
+        createSwitchRow(
+            context.getString(R.string.custom_cdn_enabled_title),
+            context.getString(R.string.custom_cdn_enabled_summary),
+            ModuleSettings.KEY_CUSTOM_CDN_ENABLED,
+            false,
+        ),
+        createCustomCdnHostRow(),
+    )
+
     private fun commentRows(): List<View> {
         return listOf(
+            createSwitchRow(
+                context.getString(R.string.comment_keyword_filter_title),
+                context.getString(R.string.comment_keyword_filter_summary),
+                ModuleSettings.KEY_COMMENT_KEYWORD_FILTER_ENABLED,
+                false,
+            ) {
+                commentKeywordFilterSwitch = it
+            },
+            createCommentKeywordRow(),
+            createSwitchRow(
+                context.getString(R.string.comment_min_level_switch_title),
+                context.getString(R.string.comment_min_level_switch_summary),
+                ModuleSettings.KEY_COMMENT_MIN_LEVEL_ENABLED,
+                false,
+            ) {
+                commentMinLevelSwitch = it
+            },
+            createCommentMinLevelRow(),
             createSwitchRow(
                 context.getString(R.string.comment_disable_title),
                 context.getString(R.string.comment_disable_summary),
@@ -557,12 +672,34 @@ class SettingsContentFactory(
                 false,
             ),
             createSwitchRow(
+                context.getString(R.string.mine_component_hide_title),
+                context.getString(R.string.mine_component_hide_summary),
+                ModuleSettings.KEY_CUSTOM_MINE_COMPONENT_HIDE_ENABLED,
+                false,
+            ) {
+                customMineComponentHideSwitch = it
+            },
+        ).toMutableList().also { rows ->
+            val components = mineComponentItems()
+            if (components.isEmpty()) {
+                rows += createInfoRow(
+                    context.getString(R.string.mine_component_title),
+                    context.getString(R.string.mine_component_unavailable_summary),
+                )
+            } else {
+                rows += createInfoRow(
+                    context.getString(R.string.mine_component_title),
+                    context.getString(R.string.mine_component_info_summary),
+                )
+                rows += createMineComponentPickerRow(components)
+            }
+            rows += createSwitchRow(
                 context.getString(R.string.full_number_format_title),
                 context.getString(R.string.full_number_format_summary),
                 ModuleSettings.KEY_FULL_NUMBER_FORMAT_ENABLED,
                 false,
-            ),
-        )
+            )
+        }
     }
 
     private fun skipVideoAdOverviewRows(): List<View> {
@@ -847,7 +984,7 @@ class SettingsContentFactory(
         val summaryView = TextView(context).apply {
             text = context.getString(R.string.about_check_update_summary)
             textSize = 12f
-            setTextColor(SUMMARY_COLOR)
+            setTextColor(summaryTextColor)
             setPadding(0, dp(4), 0, 0)
         }
         updateCheckSummaryView = summaryView
@@ -860,7 +997,7 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = context.getString(R.string.about_check_update_title)
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(summaryView)
         }
@@ -947,18 +1084,18 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = header
                 textSize = 14f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(TextView(context).apply {
                 text = context.getString(R.string.check_update_notes_label)
                 textSize = 12f
-                setTextColor(SUMMARY_COLOR)
+                setTextColor(summaryTextColor)
                 setPadding(0, dp(12), 0, dp(4))
             })
             addView(TextView(context).apply {
                 text = notesSpanned
                 textSize = 13f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
                 movementMethod = LinkMovementMethod.getInstance()
             })
         }
@@ -1007,7 +1144,7 @@ class SettingsContentFactory(
             text = key
             textSize = 16f
             typeface = Typeface.MONOSPACE
-            setTextColor(TITLE_COLOR)
+            setTextColor(titleTextColor)
             setTextIsSelectable(true)
             gravity = Gravity.CENTER
             setPadding(dp(18), dp(24), dp(18), dp(24))
@@ -1030,7 +1167,7 @@ class SettingsContentFactory(
         symbolScanStatusSummary = TextView(context).apply {
             text = symbolScanSummary()
             textSize = 12f
-            setTextColor(SUMMARY_COLOR)
+            setTextColor(summaryTextColor)
             setPadding(0, dp(4), 0, 0)
         }
         return LinearLayout(context).apply {
@@ -1042,7 +1179,7 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = context.getString(R.string.symbol_cache_refresh_title)
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(symbolScanStatusSummary)
         }
@@ -1143,7 +1280,7 @@ class SettingsContentFactory(
             this.text = text
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#8C8C91"))
+            setTextColor(sectionLabelColor)
             setPadding(dp(4), dp(14), dp(4), dp(8))
         }
     }
@@ -1153,7 +1290,7 @@ class SettingsContentFactory(
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 cornerRadius = dp(14).toFloat()
-                setColor(Color.WHITE)
+                setColor(cardBackgroundColor)
             }
             clipToOutline = true
             rows.forEachIndexed { index, row ->
@@ -1167,7 +1304,7 @@ class SettingsContentFactory(
 
     private fun createDivider(): View {
         return View(context).apply {
-            setBackgroundColor(Color.parseColor("#F1F2F3"))
+            setBackgroundColor(dividerColor)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(1),
@@ -1184,13 +1321,13 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = title
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             if (summary.isNotBlank()) {
                 addView(TextView(context).apply {
                     text = summary
                     textSize = 12f
-                    setTextColor(SUMMARY_COLOR)
+                    setTextColor(summaryTextColor)
                     setPadding(0, dp(4), 0, 0)
                 })
             }
@@ -1208,7 +1345,7 @@ class SettingsContentFactory(
     private fun createHomeRecommendTitleKeywordRow(): View {
         homeRecommendTitleKeywordSummaryView = TextView(context).apply {
             textSize = 12f
-            setTextColor(SUMMARY_COLOR)
+            setTextColor(summaryTextColor)
             setPadding(0, dp(4), 0, 0)
         }
         return LinearLayout(context).apply {
@@ -1220,7 +1357,7 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = context.getString(R.string.home_recommend_title_keyword_title)
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(homeRecommendTitleKeywordSummaryView)
         }.also {
@@ -1258,10 +1395,361 @@ class SettingsContentFactory(
             .show()
     }
 
+    private fun createVideoDetailRelateTitleKeywordRow(): View {
+        videoDetailRelateTitleKeywordSummaryView = TextView(context).apply {
+            textSize = 12f
+            setTextColor(summaryTextColor)
+            setPadding(0, dp(4), 0, 0)
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showVideoDetailRelateTitleKeywordDialog() }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.video_detail_relate_title_keyword_title)
+                textSize = 15f
+                setTextColor(titleTextColor)
+            })
+            addView(videoDetailRelateTitleKeywordSummaryView)
+        }.also {
+            videoDetailRelateTitleKeywordRow = it
+        }
+    }
+
+    private fun showVideoDetailRelateTitleKeywordDialog() {
+        val input = EditText(context).apply {
+            setText(ModuleSettings.getVideoDetailRelateTitleKeywordsText(prefs))
+            minLines = 4
+            maxLines = 8
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setSingleLine(false)
+            setSelectAllOnFocus(false)
+            setHint(R.string.home_recommend_title_keyword_hint)
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.video_detail_relate_title_keyword_dialog_title)
+            .setView(content)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_save) { _, _ ->
+                prefs.edit()
+                    .putString(ModuleSettings.KEY_VIDEO_DETAIL_RELATE_TITLE_KEYWORDS, input.text?.toString()?.trim().orEmpty())
+                    .apply()
+                refresh()
+            }
+            .show()
+    }
+
+    private fun createCommentKeywordRow(): View {
+        commentKeywordSummary = TextView(context).apply {
+            textSize = 12f
+            setTextColor(summaryTextColor)
+            setPadding(0, dp(4), 0, 0)
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showCommentKeywordDialog() }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.comment_keyword_row_title)
+                textSize = 15f
+                setTextColor(titleTextColor)
+            })
+            addView(commentKeywordSummary)
+        }.also {
+            commentKeywordRow = it
+        }
+    }
+
+    private fun showCommentKeywordDialog() {
+        val input = EditText(context).apply {
+            setText(ModuleSettings.getCommentKeywordsText(prefs))
+            minLines = 4
+            maxLines = 8
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setSingleLine(false)
+            setSelectAllOnFocus(false)
+            setHint(R.string.comment_keyword_hint)
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.comment_keyword_dialog_title)
+            .setView(content)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_save) { _, _ ->
+                prefs.edit()
+                    .putString(ModuleSettings.KEY_COMMENT_KEYWORDS, input.text?.toString()?.trim().orEmpty())
+                    .apply()
+                refresh()
+            }
+            .show()
+    }
+
+    private fun createCommentMinLevelRow(): View {
+        return createClickableInfoRow(
+            context.getString(R.string.comment_min_level_row_title),
+            commentMinLevelSummaryText(),
+        ) {
+            showCommentMinLevelDialog()
+        }.also {
+            commentMinLevelRow = it
+            commentMinLevelSummary = (it as ViewGroup).getChildAt(1) as TextView
+        }
+    }
+
+    private fun showCommentMinLevelDialog() {
+        val picker = NumberPicker(context).apply {
+            minValue = 1
+            maxValue = 6
+            wrapSelectorWheel = false
+            value = ModuleSettings.getCommentMinLevel(prefs).coerceIn(1, 6)
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.comment_min_level_dialog_title)
+            .setView(picker)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_save) { _, _ ->
+                prefs.edit()
+                    .putInt(ModuleSettings.KEY_COMMENT_MIN_LEVEL, picker.value)
+                    .apply()
+                refresh()
+            }
+            .show()
+    }
+
+    private fun commentKeywordSummaryText(): String {
+        val keywords = ModuleSettings.parseCommentKeywords(ModuleSettings.getCommentKeywordsText(prefs))
+        if (keywords.isEmpty()) {
+            return context.getString(R.string.comment_keyword_empty_summary)
+        }
+        return context.getString(
+            R.string.comment_keyword_enabled_summary,
+            keywords.size,
+            keywords.take(TITLE_KEYWORD_SUMMARY_MAX_ITEMS).joinToString(context.getString(R.string.list_separator)),
+        )
+    }
+
+    private fun commentMinLevelSummaryText(): String =
+        context.getString(R.string.comment_min_level_row_summary, ModuleSettings.getCommentMinLevel(prefs))
+
+    private fun createCustomThemeColorRow(): View {
+        customThemeColorSummary = TextView(context).apply {
+            textSize = 12f
+            setTextColor(summaryTextColor)
+            setPadding(0, dp(4), 0, 0)
+        }
+        customThemeColorSwatch = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
+                marginStart = dp(8)
+            }
+            background = GradientDrawable().apply { cornerRadius = dp(6).toFloat() }
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showCustomThemeColorDialog() }
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = context.getString(R.string.custom_theme_color_title)
+                        textSize = 15f
+                        setTextColor(titleTextColor)
+                    })
+                    addView(customThemeColorSummary)
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(customThemeColorSwatch)
+        }.also { customThemeColorRow = it }
+    }
+
+    private fun showCustomThemeColorDialog() {
+        val input = EditText(context).apply {
+            setSingleLine(true)
+            setSelectAllOnFocus(true)
+            setText("%06X".format(ModuleSettings.getCustomThemeColor(prefs) and 0xFFFFFF))
+            hint = "RRGGBB"
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.custom_theme_color_dialog_title)
+            .setMessage(R.string.custom_theme_color_dialog_message)
+            .setView(input)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_save) { _, _ ->
+                val raw = input.text?.toString()?.trim()?.removePrefix("#").orEmpty()
+                val color = raw.takeIf { it.matches(Regex("[0-9a-fA-F]{6}")) }
+                    ?.let { Color.parseColor("#$it") }
+                if (color == null) {
+                    Toast.makeText(context, R.string.custom_theme_color_invalid, Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                prefs.edit().putInt(ModuleSettings.KEY_CUSTOM_THEME_COLOR, color).apply()
+                refresh()
+            }
+            .show()
+    }
+
+    private fun createCustomSkinConfigRow(): View {
+        customSkinConfigSummary = TextView(context).apply {
+            textSize = 12f
+            setTextColor(summaryTextColor)
+            setPadding(0, dp(4), 0, 0)
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showCustomSkinConfigDialog() }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.custom_skin_config_title)
+                textSize = 15f
+                setTextColor(titleTextColor)
+            })
+            addView(customSkinConfigSummary)
+        }.also { customSkinConfigRow = it }
+    }
+
+    private fun createCustomCdnHostRow(): View {
+        customCdnHostSummary = TextView(context).apply {
+            textSize = 12f
+            setTextColor(summaryTextColor)
+            setPadding(0, dp(4), 0, 0)
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showCustomCdnHostDialog() }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.custom_cdn_host_title)
+                textSize = 15f
+                setTextColor(titleTextColor)
+            })
+            addView(customCdnHostSummary)
+        }
+    }
+
+    private fun showCustomCdnHostDialog() {
+        val endpoints = ModuleSettings.cdnEndpoints
+        val current = ModuleSettings.getCustomCdnHost(prefs)
+        val selected = endpoints.indexOfFirst { it.host == current }
+        val labels = (endpoints.map { "${it.name}\n${it.host}" } + context.getString(R.string.custom_cdn_host_custom)).toTypedArray()
+        AlertDialog.Builder(context)
+            .setTitle(R.string.custom_cdn_host_dialog_title)
+            .setSingleChoiceItems(labels, if (selected >= 0) selected else endpoints.size) { dialog, which ->
+                dialog.dismiss()
+                if (which < endpoints.size) {
+                    prefs.edit().putString(ModuleSettings.KEY_CUSTOM_CDN_HOST, endpoints[which].host).apply()
+                    refresh()
+                } else {
+                    showCustomCdnHostInputDialog()
+                }
+            }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun showCustomCdnHostInputDialog() {
+        val input = EditText(context).apply {
+            setSingleLine(true)
+            setSelectAllOnFocus(true)
+            setText(ModuleSettings.getCustomCdnHost(prefs).orEmpty())
+            hint = "upos-sz-mirrorali.bilivideo.com"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val dialog = AlertDialog.Builder(context)
+            .setTitle(R.string.custom_cdn_host_custom)
+            .setMessage(R.string.custom_cdn_host_input_message)
+            .setView(input)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_save, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val host = ModuleSettings.normalizeCdnHost(input.text?.toString())
+                if (host == null) {
+                    input.error = context.getString(R.string.custom_cdn_host_invalid)
+                    return@setOnClickListener
+                }
+                prefs.edit().putString(ModuleSettings.KEY_CUSTOM_CDN_HOST, host).apply()
+                refresh()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showCustomSkinConfigDialog() {
+        val input = EditText(context).apply {
+            minLines = 8
+            maxLines = 16
+            setText(ModuleSettings.getCustomSkinJson(prefs))
+            gravity = Gravity.TOP
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        }
+        val wrapper = ScrollView(context).apply {
+            setPadding(dp(20), 0, dp(20), 0)
+            addView(input)
+        }
+        val dialog = AlertDialog.Builder(context)
+            .setTitle(R.string.custom_skin_config_title)
+            .setMessage(R.string.custom_skin_config_message)
+            .setView(wrapper)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setNeutralButton(R.string.custom_skin_config_import_file, null)
+            .setPositiveButton(R.string.dialog_save, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                dialog.dismiss()
+                onCustomSkinImportClick()
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val text = input.text?.toString()?.trim().orEmpty()
+                val config = runCatching { JSONObject(text) }.getOrNull()
+                val skin = config?.optJSONObject("user_equip") ?: config
+                if (skin == null || skin.optString("package_url").isBlank()) {
+                    input.error = context.getString(R.string.custom_skin_config_invalid)
+                    return@setOnClickListener
+                }
+                prefs.edit()
+                    .putString(ModuleSettings.KEY_CUSTOM_SKIN_JSON, text)
+                    .putBoolean(ModuleSettings.KEY_CUSTOM_SKIN_ENABLED, true)
+                    .apply()
+                refresh()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
     private fun createBlockedCountRow(): View {
         blockedCountView = TextView(context).apply {
             textSize = 12f
-            setTextColor(SUMMARY_COLOR)
+            setTextColor(summaryTextColor)
         }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -1269,7 +1757,7 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = context.getString(R.string.story_filter_blocked_count_title)
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(blockedCountView.apply {
                 setPadding(0, dp(4), 0, 0)
@@ -1280,7 +1768,7 @@ class SettingsContentFactory(
     private fun createStoryVideoComponentAlphaRow(): View {
         storyVideoComponentAlphaSummary = TextView(context).apply {
             textSize = 12f
-            setTextColor(SUMMARY_COLOR)
+            setTextColor(summaryTextColor)
         }
         storyVideoComponentAlphaSeekBar = SeekBar(context).apply {
             max = 100
@@ -1308,7 +1796,7 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = context.getString(R.string.story_video_component_alpha_title)
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(storyVideoComponentAlphaSummary.apply {
                 setPadding(0, dp(4), 0, dp(8))
@@ -1325,7 +1813,7 @@ class SettingsContentFactory(
                 addView(CheckBox(context).apply {
                     text = tag.label
                     textSize = 14f
-                    setTextColor(TITLE_COLOR)
+                    setTextColor(titleTextColor)
                     setPadding(dp(6), dp(2), dp(6), dp(2))
                     setOnCheckedChangeListener { _, _ ->
                         if (!refreshing) saveSelectedTags()
@@ -1418,7 +1906,7 @@ class SettingsContentFactory(
                 addView(CheckBox(context).apply {
                     text = item.name
                     textSize = 14f
-                    setTextColor(TITLE_COLOR)
+                    setTextColor(titleTextColor)
                     setPadding(dp(6), dp(2), dp(6), dp(2))
                     setOnCheckedChangeListener { _, _ ->
                         if (!refreshing) saveHiddenBottomBarItems()
@@ -1437,7 +1925,7 @@ class SettingsContentFactory(
                 addView(CheckBox(context).apply {
                     text = "${item.title}\n${item.summary}"
                     textSize = 14f
-                    setTextColor(TITLE_COLOR)
+                    setTextColor(titleTextColor)
                     setPadding(dp(6), dp(2), dp(6), dp(2))
                     setOnCheckedChangeListener { _, _ ->
                         if (!refreshing) saveHiddenHomeRecommendItems()
@@ -1456,12 +1944,31 @@ class SettingsContentFactory(
                 addView(CheckBox(context).apply {
                     text = item.displayText()
                     textSize = 14f
-                    setTextColor(TITLE_COLOR)
+                    setTextColor(titleTextColor)
                     setPadding(dp(6), dp(2), dp(6), dp(2))
                     setOnCheckedChangeListener { _, _ ->
                         if (!refreshing) saveHiddenHomeRecommendTabs()
                     }
                     homeRecommendTabCheckBoxes[item.key] = this
+                })
+            }
+        }
+    }
+
+    private fun createVideoDetailRelateTypeGroup(types: List<String>): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            types.forEach { type ->
+                addView(CheckBox(context).apply {
+                    text = ModuleSettings.getRelateTypeDisplayName(type, context)
+                    textSize = 14f
+                    setTextColor(titleTextColor)
+                    setPadding(dp(6), dp(2), dp(6), dp(2))
+                    setOnCheckedChangeListener { _, _ ->
+                        if (!refreshing) saveHiddenVideoDetailRelateTypes()
+                    }
+                    videoDetailRelateTypeCheckBoxes[type] = this
                 })
             }
         }
@@ -1475,7 +1982,7 @@ class SettingsContentFactory(
                 addView(CheckBox(context).apply {
                     text = "${item.name}\n${item.className}"
                     textSize = 14f
-                    setTextColor(TITLE_COLOR)
+                    setTextColor(titleTextColor)
                     setPadding(dp(6), dp(2), dp(6), dp(2))
                     setOnCheckedChangeListener { _, _ ->
                         if (!refreshing) saveHiddenHomeComponents()
@@ -1484,6 +1991,47 @@ class SettingsContentFactory(
                 })
             }
         }
+    }
+
+    private fun createMineComponentPickerRow(items: List<MineComponentItem>): View {
+        mineComponentPickerSummary = TextView(context).apply {
+            textSize = 12f
+            setTextColor(summaryTextColor)
+            setPadding(0, dp(4), 0, 0)
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showMineComponentPickerDialog(items) }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.mine_component_picker_title)
+                textSize = 15f
+                setTextColor(titleTextColor)
+            })
+            addView(mineComponentPickerSummary)
+        }.also { mineComponentPickerRow = it }
+    }
+
+    private fun showMineComponentPickerDialog(items: List<MineComponentItem>) {
+        val retained = BooleanArray(items.size) { index ->
+            items[index].name !in ModuleSettings.getHiddenMineComponents(prefs)
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.mine_component_title)
+            .setMultiChoiceItems(items.map(MineComponentItem::name).toTypedArray(), retained) { _, which, isChecked ->
+                retained[which] = isChecked
+            }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_save) { _, _ ->
+                val hidden = items.indices
+                    .filterNot { retained[it] }
+                    .mapTo(linkedSetOf()) { items[it].name }
+                prefs.edit().putStringSet(ModuleSettings.KEY_HIDDEN_MINE_COMPONENTS, hidden).apply()
+                refresh()
+            }
+            .show()
     }
 
     private fun createSwitchRow(
@@ -1544,8 +2092,12 @@ class SettingsContentFactory(
         key == ModuleSettings.KEY_PURIFY_STORY_VIDEO_AD_ENABLED ||
             key == ModuleSettings.KEY_DISABLE_LONG_PRESS_COPY_ENABLED ||
             key == ModuleSettings.KEY_CUSTOM_BOTTOM_BAR_ENABLED ||
+            key == ModuleSettings.KEY_CUSTOM_THEME_ENABLED ||
+            key == ModuleSettings.KEY_CUSTOM_SKIN_ENABLED ||
             key == ModuleSettings.KEY_CUSTOM_HOME_RECOMMEND_FILTER_ENABLED ||
             key == ModuleSettings.KEY_CUSTOM_HOME_RECOMMEND_TAB_FILTER_ENABLED ||
+            key == ModuleSettings.KEY_COMMENT_KEYWORD_FILTER_ENABLED ||
+            key == ModuleSettings.KEY_COMMENT_MIN_LEVEL_ENABLED ||
             key == ModuleSettings.KEY_SKIP_VIDEO_AD_ENABLED ||
             key == ModuleSettings.KEY_HIDE_ALL_HOME_COMPONENTS_ENABLED ||
             key == ModuleSettings.KEY_CUSTOM_HOME_COMPONENT_HIDE_ENABLED
@@ -1564,12 +2116,12 @@ class SettingsContentFactory(
             addView(TextView(context).apply {
                 text = title
                 textSize = 15f
-                setTextColor(TITLE_COLOR)
+                setTextColor(titleTextColor)
             })
             addView(TextView(context).apply {
                 text = summary
                 textSize = 12f
-                setTextColor(SUMMARY_COLOR)
+                setTextColor(summaryTextColor)
                 setPadding(0, dp(4), 0, 0)
             })
         }
@@ -1587,8 +2139,8 @@ class SettingsContentFactory(
                 restoreSkipVideoAdAutoLikeEnabled()
             }
             .show()
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(DISABLE_CONFIRM_COLOR)
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(CANCEL_ACTION_COLOR)
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(disableConfirmColor)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(cancelActionColor)
     }
 
     private fun restoreSkipVideoAdAutoLikeEnabled() {
@@ -1617,6 +2169,8 @@ class SettingsContentFactory(
         val hideAllHomeComponentsEnabled = ModuleSettings.isHideAllHomeComponentsEnabled(prefs)
         val customHomeComponentHideEnabled = ModuleSettings.isCustomHomeComponentHideEnabled(prefs)
         val hiddenHomeComponents = ModuleSettings.getHiddenHomeComponents(prefs)
+        val customMineComponentHideEnabled = ModuleSettings.isCustomMineComponentHideEnabled(prefs)
+        val hiddenMineComponents = ModuleSettings.getHiddenMineComponents(prefs)
         val sponsorBlockEnabled = ModuleSettings.isSkipVideoAdEnabled(prefs)
         val skipVideoAdAutoLikeEnabled = ModuleSettings.isSkipVideoAdAutoLikeEnabled(prefs)
 
@@ -1649,6 +2203,54 @@ class SettingsContentFactory(
         if (::bottomBarSwitch.isInitialized) {
             bottomBarSwitch.isChecked = bottomBarEnabled
         }
+        if (::customThemeSwitch.isInitialized) {
+            customThemeSwitch.isChecked = ModuleSettings.isCustomThemeEnabled(prefs)
+        }
+        if (::customSkinSwitch.isInitialized) {
+            customSkinSwitch.isChecked = ModuleSettings.isCustomSkinEnabled(prefs)
+        }
+        if (::customThemeColorRow.isInitialized) {
+            val enabled = ModuleSettings.isCustomThemeEnabled(prefs)
+            customThemeColorRow.isEnabled = enabled
+            customThemeColorRow.alpha = if (enabled) 1f else 0.45f
+        }
+        if (::customThemeColorSummary.isInitialized) {
+            customThemeColorSummary.text = context.getString(
+                R.string.custom_theme_color_summary,
+                "#%06X".format(ModuleSettings.getCustomThemeColor(prefs) and 0xFFFFFF),
+            )
+        }
+        if (::customThemeColorSwatch.isInitialized) {
+            customThemeColorSwatch.setBackgroundColor(ModuleSettings.getCustomThemeColor(prefs))
+        }
+        if (::customSkinConfigRow.isInitialized) {
+            val enabled = ModuleSettings.isCustomSkinEnabled(prefs)
+            customSkinConfigRow.isEnabled = enabled
+            customSkinConfigRow.alpha = if (enabled) 1f else 0.45f
+        }
+        if (::customSkinConfigSummary.isInitialized) {
+            val config = ModuleSettings.getCustomSkinJson(prefs)
+            customSkinConfigSummary.text = if (config.isBlank()) {
+                context.getString(R.string.custom_skin_config_empty)
+            } else {
+                runCatching {
+                    val root = JSONObject(config)
+                    val skin = root.optJSONObject("user_equip") ?: root
+                    context.getString(
+                        R.string.custom_skin_config_loaded,
+                        skin.optString("name", skin.optLong("id").toString()),
+                    )
+                }.getOrElse { context.getString(R.string.custom_skin_config_loaded, "JSON") }
+            }
+        }
+        if (::customCdnHostSummary.isInitialized) {
+            val host = ModuleSettings.getCustomCdnHost(prefs)
+            customCdnHostSummary.text = if (host == null) {
+                context.getString(R.string.custom_cdn_host_empty_summary)
+            } else {
+                context.getString(R.string.custom_cdn_host_current_summary, host)
+            }
+        }
         bottomBarItemCheckBoxes.forEach { (id, checkBox) ->
             checkBox.isEnabled = bottomBarEnabled
             checkBox.isChecked = id !in hiddenBottomBarItems
@@ -1663,6 +2265,28 @@ class SettingsContentFactory(
             homeRecommendTitleKeywordRow.isEnabled = homeRecommendFilterEnabled
             homeRecommendTitleKeywordRow.alpha = if (homeRecommendFilterEnabled) 1f else 0.45f
         }
+        val commentKeywordFilterEnabled = ModuleSettings.isCommentKeywordFilterEnabled(prefs)
+        if (::commentKeywordFilterSwitch.isInitialized) {
+            commentKeywordFilterSwitch.isChecked = commentKeywordFilterEnabled
+        }
+        if (::commentKeywordSummary.isInitialized) {
+            commentKeywordSummary.text = commentKeywordSummaryText()
+        }
+        if (::commentKeywordRow.isInitialized) {
+            commentKeywordRow.isEnabled = commentKeywordFilterEnabled
+            commentKeywordRow.alpha = if (commentKeywordFilterEnabled) 1f else 0.45f
+        }
+        val commentMinLevelEnabled = ModuleSettings.isCommentMinLevelEnabled(prefs)
+        if (::commentMinLevelSwitch.isInitialized) {
+            commentMinLevelSwitch.isChecked = commentMinLevelEnabled
+        }
+        if (::commentMinLevelSummary.isInitialized) {
+            commentMinLevelSummary.text = commentMinLevelSummaryText()
+        }
+        if (::commentMinLevelRow.isInitialized) {
+            commentMinLevelRow.isEnabled = commentMinLevelEnabled
+            commentMinLevelRow.alpha = if (commentMinLevelEnabled) 1f else 0.45f
+        }
         homeRecommendItemCheckBoxes.forEach { (key, checkBox) ->
             checkBox.isEnabled = homeRecommendFilterEnabled
             checkBox.isChecked = key in hiddenHomeRecommendItems
@@ -1673,6 +2297,22 @@ class SettingsContentFactory(
         homeRecommendTabCheckBoxes.forEach { (key, checkBox) ->
             checkBox.isEnabled = homeRecommendTabFilterEnabled
             checkBox.isChecked = key in hiddenHomeRecommendTabs
+        }
+        val videoDetailRelateFilterEnabled = ModuleSettings.isCustomVideoDetailRelateFilterEnabled(prefs)
+        val hiddenVideoDetailRelateTypes = ModuleSettings.getHiddenVideoDetailRelateTypes(prefs)
+        if (::videoDetailRelateFilterSwitch.isInitialized) {
+            videoDetailRelateFilterSwitch.isChecked = videoDetailRelateFilterEnabled
+        }
+        if (::videoDetailRelateTitleKeywordSummaryView.isInitialized) {
+            videoDetailRelateTitleKeywordSummaryView.text = videoDetailRelateTitleKeywordSummary()
+        }
+        if (::videoDetailRelateTitleKeywordRow.isInitialized) {
+            videoDetailRelateTitleKeywordRow.isEnabled = videoDetailRelateFilterEnabled
+            videoDetailRelateTitleKeywordRow.alpha = if (videoDetailRelateFilterEnabled) 1f else 0.45f
+        }
+        videoDetailRelateTypeCheckBoxes.forEach { (type, checkBox) ->
+            checkBox.isEnabled = videoDetailRelateFilterEnabled
+            checkBox.isChecked = type in hiddenVideoDetailRelateTypes
         }
         if (::hideAllHomeComponentsSwitch.isInitialized) {
             hideAllHomeComponentsSwitch.isChecked = hideAllHomeComponentsEnabled
@@ -1685,6 +2325,22 @@ class SettingsContentFactory(
         homeComponentCheckBoxes.forEach { (className, checkBox) ->
             checkBox.isEnabled = homeComponentPickerEnabled
             checkBox.isChecked = className !in hiddenHomeComponents
+        }
+        if (::customMineComponentHideSwitch.isInitialized) {
+            customMineComponentHideSwitch.isChecked = customMineComponentHideEnabled
+        }
+        if (::mineComponentPickerRow.isInitialized) {
+            mineComponentPickerRow.isEnabled = customMineComponentHideEnabled
+            mineComponentPickerRow.alpha = if (customMineComponentHideEnabled) 1f else 0.45f
+        }
+        if (::mineComponentPickerSummary.isInitialized) {
+            val components = mineComponentItems()
+            val hiddenCount = components.count { it.name in hiddenMineComponents }
+            mineComponentPickerSummary.text = context.getString(
+                R.string.mine_component_picker_summary,
+                hiddenCount,
+                components.size,
+            )
         }
 
         if (::storyVideoAdSwitch.isInitialized) {
@@ -1762,6 +2418,15 @@ class SettingsContentFactory(
             .apply()
     }
 
+    private fun saveHiddenVideoDetailRelateTypes() {
+        prefs.edit()
+            .putStringSet(
+                ModuleSettings.KEY_HIDDEN_VIDEO_DETAIL_RELATE_TYPES,
+                hiddenVideoDetailRelateTypeKeys().toMutableSet(),
+            )
+            .apply()
+    }
+
     private fun selectedTagKeys(): Set<String> =
         tagCheckBoxes.filterValues { it.isChecked }.keys.toSet()
 
@@ -1777,8 +2442,32 @@ class SettingsContentFactory(
     private fun hiddenHomeComponentClassNames(): Set<String> =
         homeComponentCheckBoxes.filterValues { !it.isChecked }.keys.toSet()
 
+    private fun hiddenVideoDetailRelateTypeKeys(): Set<String> =
+        videoDetailRelateTypeCheckBoxes.filterValues { it.isChecked }.keys.toSet()
+
     private fun storyVideoComponentAlphaSummary(percent: Int): String =
         context.getString(R.string.story_video_component_alpha_summary, percent.coerceIn(0, 100))
+
+    private fun videoDetailRelateTitleKeywordSummary(): String {
+        val keywords = ModuleSettings.parseVideoDetailRelateTitleKeywords(
+            ModuleSettings.getVideoDetailRelateTitleKeywordsText(prefs),
+        )
+        if (keywords.isEmpty()) {
+            return context.getString(R.string.video_detail_relate_title_keyword_empty_summary)
+        }
+        return context.getString(
+            R.string.video_detail_relate_title_keyword_enabled_summary,
+            keywords.size,
+            keywords.take(TITLE_KEYWORD_SUMMARY_MAX_ITEMS).joinToString(context.getString(R.string.list_separator)),
+        )
+    }
+
+    private fun videoDetailRelateTypes(): List<String> =
+        ModuleSettings.getKnownVideoDetailRelateTypes(prefs)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
 
     private fun homeRecommendTitleKeywordSummary(): String {
         val keywords = ModuleSettings.parseHomeRecommendTitleKeywords(
@@ -1799,7 +2488,7 @@ class SettingsContentFactory(
             text = RuntimeEnvironmentInfo.runtimeEnvironmentJson(context, prefs)
             textSize = 12f
             typeface = Typeface.MONOSPACE
-            setTextColor(TITLE_COLOR)
+            setTextColor(titleTextColor)
             setTextIsSelectable(true)
             setPadding(dp(18), dp(14), dp(18), dp(14))
         }
@@ -1878,6 +2567,13 @@ class SettingsContentFactory(
             .mapNotNull(::parseHomeComponentItem)
             .distinctBy(HomeComponentItem::className)
             .sortedWith(compareBy<HomeComponentItem> { it.order }.thenBy { it.name }.thenBy { it.className })
+
+    private fun mineComponentItems(): List<MineComponentItem> =
+        ModuleSettings.getKnownMineComponents(prefs)
+            .filter { it.isNotBlank() }
+            .map(::MineComponentItem)
+            .distinctBy(MineComponentItem::name)
+            .sortedBy(MineComponentItem::name)
 
     private fun parseBottomBarItem(raw: String): BottomBarItem? {
         val parts = raw.split('\t', limit = 4)
@@ -1970,14 +2666,11 @@ class SettingsContentFactory(
         val className: String,
     )
 
+    private data class MineComponentItem(val name: String)
+
     private companion object {
         private const val PROJECT_REPOSITORY_URL = "https://github.com/HSSkyBoy/BBZQ"
         private const val TELEGRAM_CHANNEL_URL = "https://t.me/bbx_show"
-        private val PAGE_BACKGROUND = Color.parseColor("#F6F7F8")
-        private val TITLE_COLOR = Color.parseColor("#18191C")
-        private val SUMMARY_COLOR = Color.parseColor("#9499A0")
-        private val DISABLE_CONFIRM_COLOR = Color.parseColor("#F6B000")
-        private val CANCEL_ACTION_COLOR = Color.parseColor("#00A1D6")
         private const val VERSION_TAP_WINDOW_MS = 1500L
         private const val TITLE_KEYWORD_SUMMARY_MAX_ITEMS = 4
         private const val UNKNOWN_RUNTIME_VALUE = "unknown"

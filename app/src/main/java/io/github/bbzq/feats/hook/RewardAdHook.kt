@@ -178,7 +178,10 @@ class RewardAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun invokeSetElapsedTime(target: Any?, elapsedMs: Long) {
         if (target == null) return
         runCatching {
-            target.javaClass.getMethod("setElapsedTime", Long::class.javaPrimitiveType!!).invoke(target, elapsedMs)
+            target.javaClass.methods.firstOrNull { method ->
+                method.parameterTypes.contentEquals(arrayOf(Long::class.javaPrimitiveType!!)) &&
+                    (method.name == "setElapsedTime" || method.name.startsWith("setElapsedTime\$"))
+            }?.invoke(target, elapsedMs)
         }
     }
 

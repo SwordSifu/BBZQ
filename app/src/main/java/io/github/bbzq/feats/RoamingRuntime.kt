@@ -6,11 +6,14 @@ import android.content.SharedPreferences
 import android.content.res.AssetManager
 import android.content.res.Resources
 import io.github.bbzq.ModuleSettingsBridge
+import io.github.bbzq.RuntimeEnvironmentInfo
 import kotlin.LazyThreadSafetyMode
 import io.github.bbzq.feats.hook.BottomBarHook
 import io.github.bbzq.feats.hook.AutoLikeHook
 import io.github.bbzq.feats.hook.AccessKeyHook
 import io.github.bbzq.feats.hook.ChronosPromotionHook
+import io.github.bbzq.feats.hook.CustomThemeHook
+import io.github.bbzq.feats.hook.CustomCdnHook
 import io.github.bbzq.feats.hook.DownloadThreadHook
 import io.github.bbzq.feats.hook.DynamicPageHook
 import io.github.bbzq.feats.hook.TeenagersModeHook
@@ -21,6 +24,7 @@ import io.github.bbzq.feats.hook.HomeRecommendPreloadHook
 import io.github.bbzq.feats.hook.HomeRecommendTabHook
 import io.github.bbzq.feats.hook.HomeComponentHideHook
 import io.github.bbzq.feats.hook.HomeTopBarPurifyHook
+import io.github.bbzq.feats.hook.SearchPurifyHook
 import io.github.bbzq.feats.hook.RewardAdHook
 import io.github.bbzq.feats.hook.SettingHook
 import io.github.bbzq.feats.hook.ShareHook
@@ -35,13 +39,15 @@ import io.github.bbzq.feats.hook.StoryPlayerAdHook
 import io.github.bbzq.feats.hook.BlockUpdateHook
 import io.github.bbzq.feats.hook.VideoCommentHook
 import io.github.bbzq.feats.hook.VideoDetailBannerAdHook
+import io.github.bbzq.feats.hook.VideoDetailRelateFilterHook
 import io.github.bbzq.feats.hook.FullNumberFormatHook
 import io.github.bbzq.feats.hook.MineProfileHook
 import io.github.bbzq.feats.hook.PlayerUiHook
 import io.github.bbzq.feats.hook.TripleSpeedHook
+import io.github.bbzq.feats.hook.LongPressSpeedLockHook
 import io.github.bbzq.feats.hook.ReadEraHook
+import io.github.bbzq.feats.hook.BlockActivityMetaStickerHook
 import io.github.bbzq.feats.hook.WoMicHook
-import io.github.bbzq.feats.hook.SearchPurifyHook
 import io.github.bbzq.feats.symbol.BiliHookSymbols
 import io.github.bbzq.feats.symbol.BiliSymbolResolver
 import io.github.libxposed.api.XposedInterface
@@ -73,6 +79,14 @@ object RoamingRuntime {
         if (packageName == WO_MIC_PACKAGE) {
             env.log("BBZQ runtime starting for $packageName (WO Mic mode)")
             ModuleSettingsBridge.attach(env.hostContext, xposed)
+            runCatching {
+                RuntimeEnvironmentInfo.recordRuntimeSnapshot(
+                    hostContext = env.hostContext,
+                    processName = env.processName,
+                    xposed = xposed,
+                    prefs = env.prefs,
+                )
+            }
             val woMicHook = WoMicHook(env)
             runCatching { woMicHook.startHook() }
                 .onFailure { env.log("WoMicHook failed", it) }
@@ -83,6 +97,14 @@ object RoamingRuntime {
         if (packageName == READERA_PACKAGE) {
             env.log("BBZQ runtime starting for $packageName (ReadEra mode)")
             ModuleSettingsBridge.attach(env.hostContext, xposed)
+            runCatching {
+                RuntimeEnvironmentInfo.recordRuntimeSnapshot(
+                    hostContext = env.hostContext,
+                    processName = env.processName,
+                    xposed = xposed,
+                    prefs = env.prefs,
+                )
+            }
             val readEraHook = ReadEraHook(env)
             runCatching { readEraHook.startHook() }
                 .onFailure { env.log("ReadEraHook failed", it) }
@@ -100,6 +122,14 @@ object RoamingRuntime {
 
         ModuleSettingsBridge.attach(env.hostContext, xposed)
         if (processScope == ProcessScope.MAIN) {
+            runCatching {
+                RuntimeEnvironmentInfo.recordRuntimeSnapshot(
+                    hostContext = env.hostContext,
+                    processName = env.processName,
+                    xposed = xposed,
+                    prefs = env.prefs,
+                )
+            }
             HookUpdateChecker.check(env)
         }
         val symbols = if (processScope != ProcessScope.UNSUPPORTED) {
@@ -128,6 +158,7 @@ object RoamingRuntime {
 
             ProcessScope.DOWNLOAD -> listOf(
                 ::DownloadThreadHook,
+                ::CustomCdnHook,
             )
 
             ProcessScope.MAIN -> listOf(
@@ -142,15 +173,19 @@ object RoamingRuntime {
                 ::HomeRecommendPreloadHook,
                 ::DynamicPageHook,
                 ::HomeTopBarPurifyHook,
+                ::SearchPurifyHook,
                 ::StoryDefaultLaunchHook,
                 ::StoryPlayerAdHook,
                 ::StoryFullscreenHook,
                 ::StoryDanmakuHook,
                 ::StoryComponentAlphaHook,
                 ::VideoDetailBannerAdHook,
+                ::VideoDetailRelateFilterHook,
                 ::PlayerUiHook,
                 ::TripleSpeedHook,
+                ::LongPressSpeedLockHook,
                 ::TryFreeQualityHook,
+                ::CustomCdnHook,
                 ::ChronosPromotionHook,
                 ::SkipVideoAdHook,
                 ::SkipVideoAdProgressHook,
@@ -162,7 +197,8 @@ object RoamingRuntime {
                 ::VideoCommentHook,
                 ::FullNumberFormatHook,
                 ::MineProfileHook,
-                ::SearchPurifyHook,
+                ::CustomThemeHook,
+                ::BlockActivityMetaStickerHook,
             )
             ProcessScope.UNSUPPORTED -> emptyList()
         }
@@ -171,6 +207,11 @@ object RoamingRuntime {
             val hook = factory(env)
             runCatching { hook.startHook() }
                 .onFailure { env.log("Hook failed: ${hook.javaClass.simpleName}", it) }
+        }
+
+        if (processScope == ProcessScope.WEB) {
+            runCatching { CustomThemeHook(env).insertColorForWebProcess() }
+                .onFailure { env.log("CustomTheme web process hook failed", it) }
         }
 
         env.log("BBZQ runtime installed ${hooks.size} hook(s)")

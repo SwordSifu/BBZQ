@@ -1,4 +1,4 @@
-﻿package io.github.bbzq.feats.hook
+package io.github.bbzq.feats.hook
 
 import android.content.Context
 import android.view.View
@@ -216,9 +216,14 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                                     System.identityHashCode(proxy)
                                 method.isObjectMethod("equals", 1) ->
                                     proxy === args?.firstOrNull()
-                                method.name in BLOCKED_METHODS -> {
+                                method.name == "getUpperAdView" -> {
                                     logBlocked(method.name)
                                     null
+                                }
+                                method.name in BLOCKED_METHODS -> {
+                                    logBlocked(method.name)
+                                    val result = invokeOriginal(original, method, args) ?: return@runCatching null
+                                    createAdCallbackProxy(result)
                                 }
                                 else ->
                                     invokeOriginal(original, method, args)
@@ -250,9 +255,21 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                                 System.identityHashCode(proxy)
                             method.isObjectMethod("equals", 1) ->
                                 proxy === args?.firstOrNull()
-                            method.hasSameSignatureAs(requestPausedPage) -> {
+                            method.name == "requestPausedPage" || method.hasSameSignatureAs(requestPausedPage) -> {
                                 logBlocked(method.name)
                                 null
+                            }
+                            method.name == "getCountDownView" -> {
+                                logBlocked(method.name)
+                                val context = args?.getOrNull(0) as? Context
+                                if (context != null) {
+                                    Space(context).apply {
+                                        visibility = View.GONE
+                                        layoutParams = ViewGroup.LayoutParams(0, 0)
+                                    }
+                                } else {
+                                    null
+                                }
                             }
                             else ->
                                 invokeOriginal(original, method, args)
@@ -288,7 +305,8 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
                             method.hasSameSignatureAs(getPausedPagePanel) ||
                                 method.hasSameSignatureAs(getBrandPausedPagePanel) -> {
                                 logBlocked(method.name)
-                                null
+                                val result = invokeOriginal(original, method, args) ?: return@runCatching null
+                                createAdCallbackProxy(result)
                             }
                             else ->
                                 invokeOriginal(original, method, args)
@@ -395,6 +413,69 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         return runCatching {
             entryConstructor.newInstance(view)
         }.getOrNull()
+    }
+
+    private fun createAdCallbackProxy(originalCallback: Any): Any {
+        val callbackClass = originalCallback.javaClass
+
+        if (callbackClass.name.startsWith("kotlinx.coroutines.") ||
+            callbackClass.name.startsWith("kotlin.coroutines.")
+        ) {
+            return originalCallback
+        }
+
+        val interfaces = buildSet {
+            var currentClass: Class<*>? = callbackClass
+            while (currentClass != null) {
+                currentClass.interfaces.forEach { add(it) }
+                currentClass = currentClass.superclass
+            }
+        }.toTypedArray()
+
+        if (interfaces.isEmpty()) return originalCallback
+
+        if (interfaces.any { it.name.startsWith("kotlinx.coroutines.") || it.name.startsWith("kotlin.coroutines.") }) {
+            return originalCallback
+        }
+
+        val falseStateFlow = runCatching {
+            val stateFlowKt = callbackClass.classLoader?.loadClass("kotlinx.coroutines.flow.StateFlowKt")
+                ?: Class.forName("kotlinx.coroutines.flow.StateFlowKt")
+            val method = stateFlowKt.getDeclaredMethod("MutableStateFlow", Any::class.java)
+            method.invoke(null, java.lang.Boolean.FALSE)
+        }.getOrNull()
+
+        return Proxy.newProxyInstance(
+            callbackClass.classLoader ?: classLoader,
+            interfaces,
+            InvocationHandler { proxy, method, args ->
+                when {
+                    method.isObjectMethod("toString", 0) ->
+                        "BBZQAdCallbackProxy(${originalCallback.javaClass.name})"
+                    method.isObjectMethod("hashCode", 0) ->
+                        System.identityHashCode(proxy)
+                    method.isObjectMethod("equals", 1) ->
+                        proxy === args?.firstOrNull()
+                    method.name == "isBlankView" && method.parameterCount == 0 -> true
+                    method.name == "defaultContainerVisible" && method.parameterCount == 0 -> false
+                    method.name == "getViewHeight" && method.parameterCount == 0 -> 0
+                    method.name == "isSupportAnimIn" && method.parameterCount == 0 -> false
+                    method.name == "getVisibleFlow" && method.parameterCount == 0 && falseStateFlow != null -> {
+                        falseStateFlow
+                    }
+                    (method.name == "getRootView" || method.name == "getAdView" || method.name == "getAdRoot") && method.parameterCount == 0 -> {
+                        val realView = invokeOriginal(originalCallback, method, args) as? View
+                        realView?.apply {
+                            visibility = View.GONE
+                            layoutParams = ViewGroup.LayoutParams(0, 0)
+                            setPadding(0, 0, 0, 0)
+                        }
+                        realView
+                    }
+                    else -> invokeOriginal(originalCallback, method, args)
+                }
+            },
+        )
     }
 
     private fun logBlocked(methodName: String) {

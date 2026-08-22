@@ -31,6 +31,7 @@ data class BiliHookSymbols(
     val storyDanmaku: StoryDanmakuSymbols? = null,
     val storyComponentAlpha: StoryComponentAlphaSymbols? = null,
     val videoDetailBannerAd: VideoDetailBannerAdSymbols? = null,
+    val videoDetailRelateFeed: VideoDetailRelateFeedSymbols? = null,
     val homeTopBar: HomeTopBarSymbols? = null,
     val bottomBar: BottomBarSymbols? = null,
     val homeRecommendFeed: HomeRecommendFeedSymbols? = null,
@@ -43,6 +44,8 @@ data class BiliHookSymbols(
     val chronosPromotion: ChronosPromotionSymbols? = null,
     val fullNumberFormat: FullNumberFormatSymbols? = null,
     val tripleSpeed: TripleSpeedSymbols? = null,
+    val customTheme: CustomThemeSymbols? = null,
+    val customSkin: CustomSkinSymbols? = null,
 ) {
     fun isUsableWith(expectedFingerprint: String): Boolean =
         cacheSchemaVersion == CACHE_SCHEMA_VERSION &&
@@ -70,6 +73,7 @@ data class BiliHookSymbols(
         .putOpt("storyDanmaku", storyDanmaku?.toJson())
         .putOpt("storyComponentAlpha", storyComponentAlpha?.toJson())
         .putOpt("videoDetailBannerAd", videoDetailBannerAd?.toJson())
+        .putOpt("videoDetailRelateFeed", videoDetailRelateFeed?.toJson())
         .putOpt("homeTopBar", homeTopBar?.toJson())
         .putOpt("bottomBar", bottomBar?.toJson())
         .putOpt("homeRecommendFeed", homeRecommendFeed?.toJson())
@@ -82,9 +86,11 @@ data class BiliHookSymbols(
         .putOpt("chronosPromotion", chronosPromotion?.toJson())
         .putOpt("fullNumberFormat", fullNumberFormat?.toJson())
         .putOpt("tripleSpeed", tripleSpeed?.toJson())
+        .putOpt("customTheme", customTheme?.toJson())
+        .putOpt("customSkin", customSkin?.toJson())
 
     companion object {
-        const val CACHE_SCHEMA_VERSION = 30
+        const val CACHE_SCHEMA_VERSION = 35
 
         fun fromJson(raw: String?): BiliHookSymbols? {
             if (raw.isNullOrBlank()) return null
@@ -113,6 +119,8 @@ data class BiliHookSymbols(
                         ?.let(StoryComponentAlphaSymbols::fromJson),
                     videoDetailBannerAd = obj.optJSONObject("videoDetailBannerAd")
                         ?.let(VideoDetailBannerAdSymbols::fromJson),
+                    videoDetailRelateFeed = obj.optJSONObject("videoDetailRelateFeed")
+                        ?.let(VideoDetailRelateFeedSymbols::fromJson),
                     homeTopBar = obj.optJSONObject("homeTopBar")?.let(HomeTopBarSymbols::fromJson),
                     bottomBar = obj.optJSONObject("bottomBar")?.let(BottomBarSymbols::fromJson),
                     homeRecommendFeed = obj.optJSONObject("homeRecommendFeed")?.let(HomeRecommendFeedSymbols::fromJson),
@@ -127,6 +135,8 @@ data class BiliHookSymbols(
                     chronosPromotion = obj.optJSONObject("chronosPromotion")?.let(ChronosPromotionSymbols::fromJson),
                     fullNumberFormat = obj.optJSONObject("fullNumberFormat")?.let(FullNumberFormatSymbols::fromJson),
                     tripleSpeed = obj.optJSONObject("tripleSpeed")?.let(TripleSpeedSymbols::fromJson),
+                    customTheme = obj.optJSONObject("customTheme")?.let(CustomThemeSymbols::fromJson),
+                    customSkin = obj.optJSONObject("customSkin")?.let(CustomSkinSymbols::fromJson),
                 )
             }.getOrNull()
         }
@@ -134,7 +144,7 @@ data class BiliHookSymbols(
 }
 
 object DexKitRuleVersions {
-    const val CURRENT = 47
+    const val CURRENT = 54
 }
 
 data class HookPointStatus(
@@ -1254,6 +1264,73 @@ data class RestoredBottomBarSymbols(
     val baseOnViewCreatedMethods: List<Method>,
 )
 
+data class VideoDetailRelateFeedSymbols(
+    val responseGetItems: List<RelateResponseGetItemsSymbols>,
+    val detailRelateServiceMethod: MethodDescriptor?,
+    val evidence: String,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("responseGetItems", responseGetItems.toJsonArray { it.toJson() })
+        .putOpt("detailRelateServiceMethod", detailRelateServiceMethod?.toJson())
+        .put("evidence", evidence)
+
+    fun restore(classLoader: ClassLoader): RestoredVideoDetailRelateFeedSymbols {
+        val responses = responseGetItems.mapNotNull { it.restore(classLoader) }
+        val detailServiceMethod = detailRelateServiceMethod?.let { descriptor ->
+            val owner = classLoader.loadClassOrNull(descriptor.declaringClassName) ?: return@let null
+            descriptor.restore(owner)
+        }
+        return RestoredVideoDetailRelateFeedSymbols(
+            responseGetItems = responses,
+            detailRelateServiceMethod = detailServiceMethod,
+        )
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): VideoDetailRelateFeedSymbols = VideoDetailRelateFeedSymbols(
+            responseGetItems = obj.optJSONArray("responseGetItems").toList {
+                RelateResponseGetItemsSymbols.fromJson(it)
+            },
+            detailRelateServiceMethod = obj.optJSONObject("detailRelateServiceMethod")?.let(MethodDescriptor::fromJson),
+            evidence = obj.optString("evidence", "-"),
+        )
+    }
+}
+
+data class RelateResponseGetItemsSymbols(
+    val getItems: MethodDescriptor,
+    val itemsField: FieldDescriptor?,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("getItems", getItems.toJson())
+        .putOpt("itemsField", itemsField?.toJson())
+
+    fun restore(classLoader: ClassLoader): RestoredRelateResponseGetItemsSymbols? {
+        val owner = classLoader.loadClassOrNull(getItems.declaringClassName) ?: return null
+        return RestoredRelateResponseGetItemsSymbols(
+            getItems = getItems.restore(owner) ?: return null,
+            itemsField = itemsField.restoreOptional(classLoader),
+        )
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): RelateResponseGetItemsSymbols = RelateResponseGetItemsSymbols(
+            getItems = MethodDescriptor.fromJson(obj.getJSONObject("getItems")),
+            itemsField = obj.optJSONObject("itemsField")?.let(FieldDescriptor::fromJson),
+        )
+    }
+}
+
+data class RestoredVideoDetailRelateFeedSymbols(
+    val responseGetItems: List<RestoredRelateResponseGetItemsSymbols>,
+    val detailRelateServiceMethod: Method?,
+)
+
+data class RestoredRelateResponseGetItemsSymbols(
+    val getItems: Method,
+    val itemsField: Field?,
+)
+
 data class HomeRecommendTabSymbols(
     val buildTabsMethod: MethodDescriptor,
     val idField: FieldDescriptor,
@@ -1919,6 +1996,147 @@ data class RestoredTripleSpeedSymbols(
     val highFrameRateSpeedGuardMethod: Method?,
 )
 
+data class CustomSkinSymbols(
+    val resolverMethod: MethodDescriptor,
+    val evidence: String,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("resolverMethod", resolverMethod.toJson())
+        .put("evidence", evidence)
+
+    fun restore(classLoader: ClassLoader): Method? = resolverMethod.restoreOptional(classLoader)
+
+    companion object {
+        fun fromJson(obj: JSONObject): CustomSkinSymbols = CustomSkinSymbols(
+            resolverMethod = MethodDescriptor.fromJson(obj.getJSONObject("resolverMethod")),
+            evidence = obj.optString("evidence", "-"),
+        )
+    }
+}
+
+data class CustomThemeSymbols(
+    val themeHelperClassName: String,
+    val themeHelperColorArray: FieldDescriptor,
+    val themeNameClassName: String,
+    val themeNameField: FieldDescriptor,
+    val builtInThemesClassName: String? = null,
+    val builtInThemesField: FieldDescriptor? = null,
+    val themeColorsClassName: String? = null,
+    val skinListMethod: MethodDescriptor,
+    val themeListClickClassName: String,
+    val skinClassName: String,
+    val themeProcessorClassName: String,
+    val themeResetMethods: List<MethodDescriptor>,
+    val themeIdHelperClassName: String? = null,
+    val themeIdHelperColorId: FieldDescriptor? = null,
+    val columnHelperClassName: String? = null,
+    val columnHelperColorArray: FieldDescriptor? = null,
+    val evidence: String,
+    val skinResponseClassName: String? = null,
+    val skinResponseUserGarbSetter: MethodDescriptor? = null,
+    val skinResponseLoadEquipSetter: MethodDescriptor? = null,
+    val skinResolveMethod: MethodDescriptor? = null,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("themeHelperClassName", themeHelperClassName)
+        .put("themeHelperColorArray", themeHelperColorArray.toJson())
+        .put("themeNameClassName", themeNameClassName)
+        .put("themeNameField", themeNameField.toJson())
+        .putOpt("builtInThemesClassName", builtInThemesClassName)
+        .putOpt("builtInThemesField", builtInThemesField?.toJson())
+        .putOpt("themeColorsClassName", themeColorsClassName)
+        .put("skinListMethod", skinListMethod.toJson())
+        .put("themeListClickClassName", themeListClickClassName)
+        .put("skinClassName", skinClassName)
+        .put("themeProcessorClassName", themeProcessorClassName)
+        .put("themeResetMethods", themeResetMethods.toJsonArray { it.toJson() })
+        .putOpt("themeIdHelperClassName", themeIdHelperClassName)
+        .putOpt("themeIdHelperColorId", themeIdHelperColorId?.toJson())
+        .putOpt("columnHelperClassName", columnHelperClassName)
+        .putOpt("columnHelperColorArray", columnHelperColorArray?.toJson())
+        .put("evidence", evidence)
+        .putOpt("skinResponseClassName", skinResponseClassName)
+        .putOpt("skinResponseUserGarbSetter", skinResponseUserGarbSetter?.toJson())
+        .putOpt("skinResponseLoadEquipSetter", skinResponseLoadEquipSetter?.toJson())
+        .putOpt("skinResolveMethod", skinResolveMethod?.toJson())
+
+    fun restore(classLoader: ClassLoader): RestoredCustomThemeSymbols? {
+        val themeHelperClass = classLoader.loadClassOrNull(themeHelperClassName) ?: return null
+        val themeNameClass = classLoader.loadClassOrNull(themeNameClassName) ?: return null
+        val builtInThemesClass = builtInThemesClassName?.let(classLoader::loadClassOrNull)
+        val themeColorsClass = themeColorsClassName?.let(classLoader::loadClassOrNull)
+        val skinListMethod = skinListMethod.restoreOptional(classLoader) ?: return null
+        val themeListClickClass = classLoader.loadClassOrNull(themeListClickClassName) ?: return null
+        val skinClass = classLoader.loadClassOrNull(skinClassName) ?: return null
+        val themeProcessorClass = classLoader.loadClassOrNull(themeProcessorClassName) ?: return null
+        val colorArray = themeHelperColorArray.restore(themeHelperClass) ?: return null
+        val themeName = themeNameField.restore(themeNameClass) ?: return null
+        val allThemes = builtInThemesField?.let { descriptor -> builtInThemesClass?.let(descriptor::restore) }
+        val resetMethods = themeResetMethods.restoreAll(classLoader) ?: return null
+        val themeIdHelper = themeIdHelperClassName?.let(classLoader::loadClassOrNull)
+        val themeIdColorId = themeIdHelperColorId?.let { themeIdHelper?.let(it::restore) }
+        val columnHelper = columnHelperClassName?.let(classLoader::loadClassOrNull)
+        val columnColorArray = columnHelperColorArray?.let { columnHelper?.let(it::restore) }
+        val skinResponseClass = skinResponseClassName?.let(classLoader::loadClassOrNull)
+        val userGarbSetter = skinResponseUserGarbSetter?.restoreOptional(classLoader)
+        val loadEquipSetter = skinResponseLoadEquipSetter?.restoreOptional(classLoader)
+        val skinResolveMethod = skinResolveMethod?.restoreOptional(classLoader)
+        return RestoredCustomThemeSymbols(
+            themeHelperClass, colorArray, themeName, allThemes, themeColorsClass,
+            skinListMethod, themeListClickClass, skinClass, themeProcessorClass, resetMethods,
+            themeIdHelper, themeIdColorId, columnHelper, columnColorArray,
+            skinResponseClass, userGarbSetter, loadEquipSetter, skinResolveMethod,
+        )
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): CustomThemeSymbols = CustomThemeSymbols(
+            themeHelperClassName = obj.optString("themeHelperClassName"),
+            themeHelperColorArray = FieldDescriptor.fromJson(obj.getJSONObject("themeHelperColorArray")),
+            themeNameClassName = obj.optString("themeNameClassName"),
+            themeNameField = FieldDescriptor.fromJson(obj.getJSONObject("themeNameField")),
+            builtInThemesClassName = obj.optString("builtInThemesClassName").takeIf { it.isNotBlank() },
+            builtInThemesField = obj.optJSONObject("builtInThemesField")?.let(FieldDescriptor::fromJson),
+            themeColorsClassName = obj.optString("themeColorsClassName").takeIf { it.isNotBlank() },
+            skinListMethod = MethodDescriptor.fromJson(obj.getJSONObject("skinListMethod")),
+            themeListClickClassName = obj.optString("themeListClickClassName"),
+            skinClassName = obj.optString("skinClassName"),
+            themeProcessorClassName = obj.optString("themeProcessorClassName"),
+            themeResetMethods = obj.optJSONArray("themeResetMethods").toList { MethodDescriptor.fromJson(it) },
+            themeIdHelperClassName = obj.optString("themeIdHelperClassName").takeIf { it.isNotBlank() },
+            themeIdHelperColorId = obj.optJSONObject("themeIdHelperColorId")?.let(FieldDescriptor::fromJson),
+            columnHelperClassName = obj.optString("columnHelperClassName").takeIf { it.isNotBlank() },
+            columnHelperColorArray = obj.optJSONObject("columnHelperColorArray")?.let(FieldDescriptor::fromJson),
+            evidence = obj.optString("evidence", "-"),
+            skinResponseClassName = obj.optString("skinResponseClassName").takeIf { it.isNotBlank() },
+            skinResponseUserGarbSetter = obj.optJSONObject("skinResponseUserGarbSetter")?.let(MethodDescriptor::fromJson),
+            skinResponseLoadEquipSetter = obj.optJSONObject("skinResponseLoadEquipSetter")?.let(MethodDescriptor::fromJson),
+            skinResolveMethod = obj.optJSONObject("skinResolveMethod")?.let(MethodDescriptor::fromJson),
+        )
+    }
+}
+
+data class RestoredCustomThemeSymbols(
+    val themeHelperClass: Class<*>,
+    val themeHelperColorArray: Field,
+    val themeName: Field,
+    val allThemes: Field?,
+    val themeColorsClass: Class<*>?,
+    val skinListMethod: Method,
+    val themeListClickClass: Class<*>,
+    val skinClass: Class<*>,
+    val themeProcessorClass: Class<*>,
+    val themeResetMethods: List<Method>,
+    val themeIdHelperClass: Class<*>?,
+    val themeIdHelperColorId: Field?,
+    val columnHelperClass: Class<*>?,
+    val columnHelperColorArray: Field?,
+    val skinResponseClass: Class<*>?,
+    val skinResponseUserGarbSetter: Method?,
+    val skinResponseLoadEquipSetter: Method?,
+    val skinResolveMethod: Method?,
+)
+
 data class MethodDescriptor(
     val declaringClassName: String,
     val name: String,
@@ -1997,8 +2215,17 @@ fun BiliHookSymbols.formatStatusLines(): List<String> =
             listOf("Scan Errors:") + scanErrors.map { "  - $it" }
         }
 
-internal fun ClassLoader.loadClassOrNull(name: String): Class<*>? =
-    runCatching { Class.forName(name, false, this) }.getOrNull()
+internal fun ClassLoader.loadClassOrNull(name: String): Class<*>? {
+    runCatching { Class.forName(name, false, this) }.getOrNull()?.let { return it }
+    val relocatedName = name
+        .takeIf { it.startsWith(BILIBILI_TV_PACKAGE_PREFIX) }
+        ?.let { BILIBILI_950_TV_PACKAGE_PREFIX + it.removePrefix(BILIBILI_TV_PACKAGE_PREFIX) }
+        ?: return null
+    return runCatching { Class.forName(relocatedName, false, this) }.getOrNull()
+}
+
+private const val BILIBILI_TV_PACKAGE_PREFIX = "tv.danmaku.bili."
+private const val BILIBILI_950_TV_PACKAGE_PREFIX = "p371tv.danmaku.bili."
 
 internal fun MethodDescriptor?.restoreOptional(classLoader: ClassLoader): Method? {
     val descriptor = this ?: return null
