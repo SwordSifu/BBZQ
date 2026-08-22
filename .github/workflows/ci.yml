@@ -73,10 +73,10 @@ jobs:
       - name: Accept licenses
         run: yes | sdkmanager --licenses
 
-      - name: Install SDK 36
+      - name: Install SDK 37
         run: |
-          sdkmanager "platforms;android-36"
-          sdkmanager "build-tools;36.1.0"
+          sdkmanager "platforms;android-37"
+          sdkmanager "build-tools;37.0.0"
 
       - name: Restore release keystore
         env:

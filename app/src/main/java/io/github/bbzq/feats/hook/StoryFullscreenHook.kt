@@ -1,5 +1,6 @@
 package io.github.bbzq.feats.hook
 
+import android.annotation.TargetApi
 import android.app.Activity
 import android.app.Dialog
 import android.os.Build
@@ -174,6 +175,7 @@ class StoryFullscreenHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
     }
 
+    @TargetApi(Build.VERSION_CODES.R)
     private fun trackStoryInsetsController(target: StoryWindowTarget, controller: WindowInsetsController) {
         synchronized(storyInsetsControllerTargets) {
             storyInsetsControllerTargets[controller] = target

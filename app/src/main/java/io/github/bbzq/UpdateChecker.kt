@@ -21,8 +21,8 @@ import java.util.concurrent.TimeUnit
  * 2. 版本号（versionName）：最新版版本号更高 → 有更新；
  * 3. 其余情况（版本号相同或更低）→ 已是最新。
  *
- * versionCode 取自 tag_name 开头的数字（如 133-v1.0.3-133 → 133），versionName 优先取 tag_name
- * （剥离 versionCode 前后缀，name 字段作为备选），
+ * versionCode 取自 fork tag_name 的末尾数字（如 v1.0.3-133 → 133），同时兼容旧式
+ * 133-v1.0.3-133；versionName 优先取 tag_name（剥离 versionCode 前后缀，name 字段作为备选），
  * 更新日志取 body，安装包大小取 APK 资产的 size。
  *
  * 结果回调统一切回主线程，便于直接更新 UI。
@@ -155,11 +155,15 @@ object UpdateChecker {
         val latest = releases.maxWithOrNull { left, right -> compareRelease(left, right) }
             ?: return Result(Status.FAILED, currentVersion = currentVersion)
 
-        val hasUpdate = hasUpdate(latest, currentVersion, currentVersionCode)
+        val hasUpdate = UpdateVersionParser.isUpdateAvailable(
+            remote = ParsedUpdateTag(latest.versionName, latest.versionCode),
+            localVersion = currentVersion,
+            localVersionCode = currentVersionCode,
+        )
         val status = if (hasUpdate) Status.UPDATE_AVAILABLE else Status.UP_TO_DATE
         return Result(
             status = status,
-            latestVersion = normalizeVersion(latest.versionName),
+            latestVersion = UpdateVersionParser.normalizeVersion(latest.versionName),
             currentVersion = currentVersion,
             releaseUrl = latest.htmlUrl,
             releaseNotes = latest.body.trim().takeIf { it.isNotEmpty() },
@@ -168,30 +172,12 @@ object UpdateChecker {
         )
     }
 
-    /**
-     * 判断是否有更新。
-     *
-     * - 两端 versionCode 均有效：直接以 versionCode 高低为准；
-     * - 否则按版本号：最新版版本号更高 → 有更新；
-     * - 其余情况（版本号相同或更低）→ 已是最新。
-     */
-    private fun hasUpdate(
-        latest: ReleaseInfo,
-        currentVersion: String,
-        currentVersionCode: Int,
-    ): Boolean {
-        if (latest.versionCode > 0 && currentVersionCode > 0) {
-            return latest.versionCode > currentVersionCode
-        }
-        return compareVersion(latest.versionName, currentVersion) > 0
-    }
-
     /** 列表内排序用：先比 versionCode，缺失则比版本号。 */
     private fun compareRelease(left: ReleaseInfo, right: ReleaseInfo): Int {
         if (left.versionCode > 0 && right.versionCode > 0) {
             return left.versionCode.compareTo(right.versionCode)
         }
-        return compareVersion(left.versionName, right.versionName)
+        return UpdateVersionParser.compareVersions(left.versionName, right.versionName)
     }
 
     /** 解析 Release 列表，丢弃 draft 与无版本名的条目。 */
@@ -202,10 +188,10 @@ object UpdateChecker {
             val releaseObject = releaseArray.optJSONObject(index) ?: continue
             if (releaseObject.optBoolean("draft", false)) continue
             val tagName = jsonString(releaseObject, "tag_name")
-            val versionCode = parseVersionCode(tagName)
-            // 版本名优先取 tag_name（剥离首尾 versionCode 前后缀，避免 `133-v1.0.3-133`
-            // 的数字前缀被当成主版本号），无法得出时退回 name 字段。
-            val versionName = versionNameFromTag(tagName, versionCode).ifBlank { jsonString(releaseObject, "name") }
+            val parsedTag = UpdateVersionParser.parseTag(tagName)
+            val versionCode = parsedTag?.versionCode ?: 0
+            // 版本名优先取 tag_name（兼容 fork 与旧式 tag），无法得出时退回 name 字段。
+            val versionName = parsedTag?.versionName.orEmpty().ifBlank { jsonString(releaseObject, "name") }
             if (versionName.isBlank()) continue
             val htmlUrl = jsonString(releaseObject, "html_url").takeIf { it.isNotBlank() } ?: RELEASE_PAGE_URL
             releases += ReleaseInfo(
@@ -218,30 +204,6 @@ object UpdateChecker {
             )
         }
         return releases
-    }
-
-    /**
-     * 从 tag_name 开头的数字解析 versionCode。
-     *
-     * LSPosed 仓库 tag 形如 `133-v1.0.3-133`，开头第一段即 versionCode；无则返回 0。
-     */
-    private fun parseVersionCode(tagName: String): Int =
-        tagName.substringBefore('-', "").toIntOrNull() ?: 0
-
-    /**
-     * 由 tag_name 推导可读版本名（版本名的首选来源）。
-     *
-     * LSPosed tag 形如 `133-v1.0.3-133`：先剥离开头的 versionCode 前缀，再剥离结尾的 `-133` 后缀，
-     * 得到 `v1.0.3`，避免数字前缀被 compareVersion 误当成主版本号。tag 为空时返回空串（交由调用方退回 name）。
-     */
-    private fun versionNameFromTag(tagName: String, versionCode: Int): String {
-        if (tagName.isBlank()) return ""
-        if (versionCode <= 0) return tagName
-        val codeText = versionCode.toString()
-        return tagName
-            .removePrefix("$codeText-")
-            .removeSuffix("-$codeText")
-            .ifBlank { tagName }
     }
 
     /** 读取字符串字段，JSON null 视为空串（org.json 的 optString 对 null 会返回字面 "null"）。 */
@@ -265,38 +227,13 @@ object UpdateChecker {
         mainHandler.post { onResult(result) }
     }
 
-    /** 比较语义化版本号：remote>local 返回 1，remote<local 返回 -1，相等返回 0。 */
-    private fun compareVersion(remote: String, local: String): Int {
-        val remoteParts = parseVersionParts(remote)
-        val localParts = parseVersionParts(local)
-        val partCount = maxOf(remoteParts.size, localParts.size)
-        for (index in 0 until partCount) {
-            val remotePart = remoteParts.getOrElse(index) { 0 }
-            val localPart = localParts.getOrElse(index) { 0 }
-            if (remotePart != localPart) return if (remotePart > localPart) 1 else -1
-        }
-        return 0
-    }
-
-    private fun parseVersionParts(version: String): List<Int> =
-        normalizeVersion(version)
-            .split('.')
-            .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
-
-    /** 去掉前缀 v / V 与首尾空白（如 v1.0.3 → 1.0.3）。 */
-    private fun normalizeVersion(version: String): String =
-        version.trim()
-            .removePrefix("v")
-            .removePrefix("V")
-            .trim()
-
     /** LSPosed 模块仓库的 Release 列表 API，单次最多取 30 条。 */
     private const val RELEASE_API_URL =
-        "https://api.github.com/repos/Xposed-Modules-Repo/io.github.bbzq/releases?per_page=30"
+        "https://api.github.com/repos/SwordSifu/BBZQ/releases?per_page=30"
 
     /** Release 列表为空或缺少链接时，跳转的兜底 Release 页地址。 */
     private const val RELEASE_PAGE_URL =
-        "https://github.com/Xposed-Modules-Repo/io.github.bbzq/releases/latest"
+        "https://github.com/SwordSifu/BBZQ/releases/latest"
 
     /** 请求头 User-Agent，GitHub API 要求携带。 */
     private const val USER_AGENT = "BBZQ-UpdateChecker"

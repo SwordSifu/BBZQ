@@ -89,6 +89,8 @@ object ModuleSettings {
     const val KEY_HOST_ACCOUNT_NAME = "host_account_name"
     const val KEY_HIDE_DESKTOP_ICON = "hide_desktop_icon"
     const val KEY_ACCEPT_PRERELEASE_UPDATE = "accept_prerelease_update"
+    /** Automatic hook update checks only; intentionally excluded from config export. */
+    const val KEY_HOOK_UPDATE_LAST_STARTED_AT = "hook_update_last_started_at"
     const val KEY_COMMENT_DISABLE = "vid_comment_disable"
     const val KEY_COMMENT_NO_QUICK_REPLY = "vid_comment_no_quick_reply"
     const val KEY_COMMENT_NO_VOTE = "vid_comment_no_vote"

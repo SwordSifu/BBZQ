@@ -1,6 +1,5 @@
 package io.github.bbzq
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
@@ -14,12 +13,20 @@ import android.widget.FrameLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class SettingsActivity : Activity() {
+class SettingsActivity : ComponentActivity() {
+    private val backCallback = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            finish()
+        }
+    }
+
     private val prefs by lazy {
         val base = getSharedPreferences(ModuleSettings.PREFS_NAME, MODE_PRIVATE)
         ReadableModulePreferences(this, base)
@@ -30,6 +37,7 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, backCallback)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         RuntimeEnvironmentInfo.applyRuntimeSnapshotFromIntent(intent, prefs)
         LinkerGuard.triggerConflict(this)
@@ -90,6 +98,7 @@ class SettingsActivity : Activity() {
     }
 
     override fun onDestroy() {
+        backCallback.remove()
         contentFactory?.destroy()
         contentFactory = null
         super.onDestroy()
@@ -113,11 +122,6 @@ class SettingsActivity : Activity() {
             REQUEST_IMPORT_CONFIG -> data?.data?.let(::loadImportArchive)
             REQUEST_IMPORT_CUSTOM_SKIN -> data?.data?.let(::loadCustomSkinFile)
         }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        finish()
     }
 
     private fun launchExportConfig() {
@@ -354,20 +358,35 @@ class SettingsActivity : Activity() {
         val contentBottom = content.paddingBottom
 
         root.setOnApplyWindowInsetsListener { _, insets ->
-            val safeInsets =
-                insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            toolbar.setPadding(
-                toolbarLeft,
-                toolbarTop + safeInsets.top,
-                toolbarRight,
-                toolbarBottom,
-            )
-            content.setPadding(
-                contentLeft,
-                contentTop,
-                contentRight,
-                contentBottom + safeInsets.bottom,
-            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val safeInsets =
+                    insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                toolbar.setPadding(
+                    toolbarLeft,
+                    toolbarTop + safeInsets.top,
+                    toolbarRight,
+                    toolbarBottom,
+                )
+                content.setPadding(
+                    contentLeft,
+                    contentTop,
+                    contentRight,
+                    contentBottom + safeInsets.bottom,
+                )
+            } else {
+                toolbar.setPadding(
+                    toolbarLeft,
+                    toolbarTop + insets.systemWindowInsetTop,
+                    toolbarRight,
+                    toolbarBottom,
+                )
+                content.setPadding(
+                    contentLeft,
+                    contentTop,
+                    contentRight,
+                    contentBottom + insets.systemWindowInsetBottom,
+                )
+            }
             insets
         }
         root.requestApplyInsets()

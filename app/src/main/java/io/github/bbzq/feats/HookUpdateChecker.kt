@@ -7,7 +7,30 @@ import io.github.bbzq.R
 import io.github.bbzq.UpdateChecker
 
 internal object HookUpdateChecker {
+    private val automaticCheckThrottle = AutomaticCheckThrottle(
+        intervalMillis = AUTOMATIC_CHECK_INTERVAL_MILLIS,
+    )
+
     fun check(env: RoamingEnv) {
+        if (!automaticCheckThrottle.tryAcquire(
+                readLastStartedAt = {
+                    env.prefs.getLong(
+                        ModuleSettings.KEY_HOOK_UPDATE_LAST_STARTED_AT,
+                        NO_TIMESTAMP,
+                    ).takeUnless { it == NO_TIMESTAMP }
+                },
+                writeLastStartedAt = { timestamp ->
+                    env.prefs.edit()
+                        .putLong(ModuleSettings.KEY_HOOK_UPDATE_LAST_STARTED_AT, timestamp)
+                        .apply()
+                },
+                nowMillis = { System.currentTimeMillis() },
+            )
+        ) {
+            env.log("Hook update check skipped (automatic check throttled)")
+            return
+        }
+
         val acceptPrerelease = ModuleSettings.isAcceptPrereleaseUpdateEnabled(env.prefs)
         UpdateChecker.check(
             currentVersion = BuildConfig.RELEASE_NAME,
@@ -37,4 +60,7 @@ internal object HookUpdateChecker {
             }
         }
     }
+
+    private const val AUTOMATIC_CHECK_INTERVAL_MILLIS = 24 * 60 * 60 * 1_000L
+    private const val NO_TIMESTAMP = Long.MIN_VALUE
 }

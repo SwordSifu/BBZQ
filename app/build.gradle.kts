@@ -94,7 +94,7 @@ android {
 
     defaultConfig {
         applicationId = "io.github.bbzq"
-        minSdk = 24
+        minSdk = 29
         targetSdk = 37
         versionCode = releaseCode
         versionName = "v${releaseName}-${releaseCode}"
@@ -161,4 +161,6 @@ dependencies {
     implementation(libs.libxposed.service)
     implementation(libs.dexkit)
     implementation(libs.okhttp)
+    implementation(libs.activity)
+    testImplementation(libs.junit)
 }
