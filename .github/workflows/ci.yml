@@ -131,3 +131,43 @@ jobs:
         with:
           name: bzzq-${{ env.VERSION }}-${{ matrix.label }}-release
           path: 'app/release/*.apk'
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - version
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bzzq-${{ env.VERSION }}-*-release
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          mapfile -t assets < <(find release-assets -type f -name '*.apk' -print | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release APKs were downloaded" >&2
+            exit 1
+          fi
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "BBZQ ${VERSION}" \
+              --generate-notes
+          fi
