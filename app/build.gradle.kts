@@ -104,13 +104,13 @@ apktransform {
 
 android {
     namespace = "io.github.bbzq"
-    compileSdk = 37
-    buildToolsVersion = "37.0.0"
+    compileSdk = 36
+    buildToolsVersion = "36.1.0"
 
     defaultConfig {
         applicationId = "io.github.bbzq"
         minSdk = 29
-        targetSdk = 37
+        targetSdk = 36
         versionCode = releaseCode
         versionName = "v${releaseName}-${releaseCode}"
         buildConfigField("String", "RELEASE_NAME", "\"$releaseName\"")
