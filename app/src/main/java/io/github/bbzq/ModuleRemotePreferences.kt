@@ -13,6 +13,7 @@ import kotlin.concurrent.thread
 
 object ModuleRemotePreferences : XposedServiceHelper.OnServiceListener {
     private const val TAG = "BBZQ"
+    private const val MIN_SYMBOL_SCAN_API = 102
 
     private val registered = AtomicBoolean(false)
     @Volatile private var appContext: Context? = null
@@ -180,7 +181,7 @@ object ModuleRemotePreferences : XposedServiceHelper.OnServiceListener {
         }
         thread(name = SYMBOL_REFRESH_THREAD_NAME, isDaemon = true) {
             runCatching {
-                if (currentService.apiVersion < XposedService.API_102) {
+                if (currentService.apiVersion < MIN_SYMBOL_SCAN_API) {
                     fail(callback, "当前框架不支持 API102 远程配置")
                     return@thread
                 }
