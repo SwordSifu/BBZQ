@@ -1,5 +1,9 @@
 name: CI
 
+concurrency:
+  group: bbzq-master-release
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
   push:
@@ -7,8 +11,9 @@ on:
       - master
     paths-ignore:
       - '**.md'
-      - '.github/**'
-      - '!.github/workflows/*'
+
+permissions:
+  contents: read
 
 jobs:
   version:
@@ -18,16 +23,53 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Retrieve version
         id: version
+        shell: bash
         run: |
-          version=`awk -F "=" '$1 == "releaseName" {print $2}' gradle.properties`
-          count=`git rev-list --count HEAD`
+          set -euo pipefail
+          version="$(awk -F= '$1 == "releaseName" {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' gradle.properties)"
+          count="$(git rev-list --count HEAD)"
+          test -n "$version" || { echo "releaseName is missing from gradle.properties" >&2; exit 1; }
+          test "$count" -gt 0 || { echo "Unable to compute a positive version code" >&2; exit 1; }
           echo "version=$version-$count" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Unit tests
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          cmdline-tools-version: 14742923
+
+      - name: Install Android SDK for tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --channel=3 \
+            "platforms;android-37" \
+            "build-tools;37.0.0"
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
 
   build:
     name: Build ${{ matrix.label }}
@@ -46,7 +88,7 @@ jobs:
             abis: armeabi-v7a
             suffix: armv7a
           - label: uni
-            abis: arm64-v8a,armeabi-v7a, x86_64
+            abis: arm64-v8a,armeabi-v7a,x86_64
             suffix: uni
           - label: x86_64
             abis: x86_64
@@ -54,111 +96,233 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: 'zulu'
           java-version: '21'
           cache: 'gradle'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4.0.1
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           cmdline-tools-version: 14742923
 
-      - name: Accept licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Install SDK 36
+      - name: Install compile SDK and build tools
+        shell: bash
         run: |
-          sdkmanager "platforms;android-36"
-          sdkmanager "build-tools;36.1.0"
+          set -euo pipefail
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --channel=3 \
+            "platforms;android-37" \
+            "build-tools;37.0.0"
 
-      - name: Restore release keystore
+      - name: Configure and validate release signing
+        shell: bash
         env:
           BBZQ_KEYSTORE_BASE64: ${{ secrets.BBZQ_KEYSTORE_BASE64 }}
+          BBZQ_KEYSTORE_PASSWORD: ${{ secrets.BBZQ_KEYSTORE_PASSWORD }}
+          BBZQ_KEY_ALIAS: ${{ secrets.BBZQ_KEY_ALIAS }}
+          BBZQ_KEY_PASSWORD: ${{ secrets.BBZQ_KEY_PASSWORD }}
         run: |
-          if [ -n "$BBZQ_KEYSTORE_BASE64" ]; then
-            mkdir -p signing
-            printf '%s' "$BBZQ_KEYSTORE_BASE64" | base64 -d > signing/bbzq-release.jks
+          set -euo pipefail
+          missing=()
+          for required in BBZQ_KEYSTORE_BASE64 BBZQ_KEYSTORE_PASSWORD BBZQ_KEY_ALIAS BBZQ_KEY_PASSWORD; do
+            if [ -z "${!required}" ]; then
+              missing+=("$required")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            printf 'Missing required release signing secret(s): %s\n' "${missing[*]}" >&2
+            exit 1
           fi
 
-      - name: Export signing env
-        env:
-          RELEASE_STORE_FILE: signing/bbzq-release.jks
-          RELEASE_STORE_PASSWORD: ${{ secrets.BBZQ_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.BBZQ_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.BBZQ_KEY_PASSWORD }}
-        run: |
+          mkdir -p signing
+          printf '%s' "$BBZQ_KEYSTORE_BASE64" | base64 --decode > signing/bbzq-release.jks
+          test -s signing/bbzq-release.jks
+          if ! keytool -list \
+              -keystore signing/bbzq-release.jks \
+              -storepass "$BBZQ_KEYSTORE_PASSWORD" \
+              -alias "$BBZQ_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "Release keystore, password, or alias validation failed." >&2
+            exit 1
+          fi
+
           {
-            echo "RELEASE_STORE_FILE=$RELEASE_STORE_FILE"
-            echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD"
-            echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS"
-            echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD"
+            printf 'RELEASE_STORE_FILE=%s\n' "$GITHUB_WORKSPACE/signing/bbzq-release.jks"
+            printf 'RELEASE_STORE_PASSWORD=%s\n' "$BBZQ_KEYSTORE_PASSWORD"
+            printf 'RELEASE_KEY_ALIAS=%s\n' "$BBZQ_KEY_ALIAS"
+            printf 'RELEASE_KEY_PASSWORD=%s\n' "$BBZQ_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
       - name: Restore linker guard source
+        shell: bash
         env:
           LINKER_GUARD_SOURCE_B64: ${{ secrets.LINKER_GUARD_SOURCE_B64 }}
         run: |
+          set -euo pipefail
           if [ -n "$LINKER_GUARD_SOURCE_B64" ]; then
-            printf '%s' "$LINKER_GUARD_SOURCE_B64" | base64 -d > app/src/main/java/io/github/bbzq/LinkerGuard.kt
+            printf '%s' "$LINKER_GUARD_SOURCE_B64" | base64 --decode > app/src/main/java/io/github/bbzq/LinkerGuard.kt
+            test -s app/src/main/java/io/github/bbzq/LinkerGuard.kt
+          else
+            echo "::warning::LINKER_GUARD_SOURCE_B64 is not set; using the checked-in fallback."
           fi
 
       - name: Build with gradle
+        shell: bash
         run: |
-          chmod 777 ./gradlew
-          tasks="assembleRelease"
+          set -euo pipefail
+          chmod +x ./gradlew
+          tasks=(assembleRelease)
           if [ "${{ matrix.label }}" = "uni" ]; then
-            tasks="assembleDebug $tasks"
+            tasks=(assembleDebug assembleRelease)
           fi
-          ./gradlew --no-daemon --build-cache -PbbzqAbiFilters="${{ matrix.abis }}" -PbbzqOutputSuffix="${{ matrix.suffix }}" $tasks
+          ./gradlew --no-daemon --build-cache \
+            -PbbzqAbiFilters="${{ matrix.abis }}" \
+            -PbbzqOutputSuffix="${{ matrix.suffix }}" \
+            "${tasks[@]}"
 
       - name: Upload debug artifact
-        uses: actions/upload-artifact@v4
-        if: success() && matrix.label == 'uni'
+        if: matrix.label == 'uni'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: bzzq-${{ env.VERSION }}-${{ matrix.label }}-debug
+          name: bbzq-${{ env.VERSION }}-${{ matrix.label }}-debug
           path: 'app/build/outputs/apk/debug/*.apk'
+          if-no-files-found: error
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
-        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: bzzq-${{ env.VERSION }}-${{ matrix.label }}-release
+          name: bbzq-${{ env.VERSION }}-${{ matrix.label }}-release
           path: 'app/release/*.apk'
+          if-no-files-found: error
 
   release:
     name: Publish GitHub Release
     needs:
       - version
+      - test
       - build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      EXPECTED_CERT_SHA256: ${{ vars.BBZQ_RELEASE_CERT_SHA256 }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
-          pattern: bzzq-${{ env.VERSION }}-*-release
+          cmdline-tools-version: 14742923
+
+      - name: Install APK verification tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --channel=3 "build-tools;37.0.0"
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: bbzq-${{ env.VERSION }}-*-release
           path: release-assets
           merge-multiple: true
+
+      - name: Validate release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "bbzq_v${VERSION}-arm64-v8a.apk"
+            "bbzq_v${VERSION}-armv7a.apk"
+            "bbzq_v${VERSION}-uni.apk"
+            "bbzq_v${VERSION}-x86_64.apk"
+          )
+          mapfile -t actual < <(find release-assets -maxdepth 1 -type f -name '*.apk' -printf '%f\n' | sort)
+          if [ "${#actual[@]}" -ne "${#expected[@]}" ]; then
+            echo "Expected exactly four release APKs, found ${#actual[@]}." >&2
+            printf 'Actual assets: %s\n' "${actual[*]}" >&2
+            exit 1
+          fi
+          for i in "${!expected[@]}"; do
+            if [ "${actual[$i]}" != "${expected[$i]}" ]; then
+              echo "Unexpected release APK set." >&2
+              printf 'Expected: %s\n' "${expected[*]}" >&2
+              printf 'Actual: %s\n' "${actual[*]}" >&2
+              exit 1
+            fi
+          done
+
+          aapt2="$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt2"
+          apksigner="$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner"
+          test -x "$aapt2"
+          test -x "$apksigner"
+
+          normalize_digest() {
+            tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]'
+          }
+          expected_cert="$(printf '%s' "$EXPECTED_CERT_SHA256" | normalize_digest)"
+          if [ -z "$expected_cert" ]; then
+            echo "Repository variable BBZQ_RELEASE_CERT_SHA256 is required." >&2
+            exit 1
+          fi
+
+          version_code="${VERSION##*-}"
+          for asset in "${expected[@]}"; do
+            apk="release-assets/$asset"
+            test -s "$apk"
+
+            case "$asset" in
+              *-arm64-v8a.apk) expected_abis="arm64-v8a" ;;
+              *-armv7a.apk) expected_abis="armeabi-v7a" ;;
+              *-uni.apk) expected_abis="arm64-v8a,armeabi-v7a,x86_64" ;;
+              *-x86_64.apk) expected_abis="x86_64" ;;
+              *) echo "Unknown APK asset: $asset" >&2; exit 1 ;;
+            esac
+
+            actual_abis="$(unzip -Z1 "$apk" | awk -F/ '$1 == "lib" && NF >= 3 {print $2}' | sort -u | paste -sd, -)"
+            if [ "$actual_abis" != "$expected_abis" ]; then
+              echo "ABI mismatch for $asset: expected $expected_abis, got ${actual_abis:-none}." >&2
+              exit 1
+            fi
+
+            badging="$("$aapt2" dump badging "$apk")"
+            grep -Fq "package: name='io.github.bbzq'" <<<"$badging" || { echo "Package ID mismatch for $asset." >&2; exit 1; }
+            grep -Fq "versionCode='$version_code'" <<<"$badging" || { echo "Version code mismatch for $asset." >&2; exit 1; }
+            grep -Fq "versionName='v$VERSION'" <<<"$badging" || { echo "Version name mismatch for $asset." >&2; exit 1; }
+
+            signer_output="$("$apksigner" verify --verbose --print-certs "$apk")"
+            actual_cert="$(printf '%s\n' "$signer_output" | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' | normalize_digest)"
+            if [ "$actual_cert" != "$expected_cert" ]; then
+              echo "Signing certificate mismatch for $asset." >&2
+              echo "Expected $expected_cert, actual ${actual_cert:-missing}." >&2
+              exit 1
+            fi
+          done
+
+          (
+            cd release-assets
+            sha256sum "${expected[@]}" > SHA256SUMS.txt
+          )
 
       - name: Create or update GitHub Release
         shell: bash
         run: |
           set -euo pipefail
-          tag="v${VERSION}"
-          mapfile -t assets < <(find release-assets -type f -name '*.apk' -print | sort)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No release APKs were downloaded" >&2
+          tag="v$VERSION"
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha' 2>/dev/null || true)"
+          if [ -n "$tag_sha" ] && [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "Tag $tag already points to $tag_sha, not $GITHUB_SHA." >&2
+            exit 1
+          fi
+
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f \( -name '*.apk' -o -name 'SHA256SUMS.txt' \) -print | sort)
+          if [ "${#assets[@]}" -ne 5 ]; then
+            echo "Expected four APKs plus SHA256SUMS.txt." >&2
             exit 1
           fi
 
@@ -168,6 +332,6 @@ jobs:
             gh release create "$tag" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "BBZQ ${VERSION}" \
+              --title "BBZQ $VERSION" \
               --generate-notes
           fi

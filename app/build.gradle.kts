@@ -62,13 +62,28 @@ fun buildOutputSuffix(): String {
         .orEmpty()
 }
 
-listOf(
+val releaseSigningKeys = listOf(
     "releaseStoreFile",
     "releaseStorePassword",
     "releaseKeyAlias",
     "releaseKeyPassword",
-).forEach { name ->
-    signingValue(name)?.let { extensions.extraProperties.set(name, it) }
+)
+val releaseSigningValues = releaseSigningKeys.associateWith(::signingValue)
+val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.substringAfterLast(':').contains("Release", ignoreCase = true)
+}
+if (releaseBuildRequested) {
+    val missingSigningKeys = releaseSigningValues.filterValues { it.isNullOrBlank() }.keys
+    require(missingSigningKeys.isEmpty()) {
+        "Release signing configuration is incomplete. Missing: ${missingSigningKeys.joinToString()}"
+    }
+    val storeFile = releaseSigningValues.getValue("releaseStoreFile")!!
+    require(rootProject.file(storeFile).isFile) {
+        "Release signing keystore does not exist: $storeFile"
+    }
+}
+releaseSigningValues.forEach { (name, value) ->
+    value?.let { extensions.extraProperties.set(name, it) }
 }
 
 apksign {
