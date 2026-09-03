@@ -60,13 +60,19 @@ jobs:
         with:
           cmdline-tools-version: 14742923
 
-      - name: Install Android SDK for tests
+      - name: Verify Android SDK 37 and build tools
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --channel=3 \
-            "platforms;android-37" \
-            "build-tools;37.0.0"
+          sdk_root="$ANDROID_SDK_ROOT"
+          test -f "$sdk_root/platforms/android-37/android.jar" || {
+            echo "Android SDK platform 37 is missing from this runner." >&2
+            exit 1
+          }
+          test -x "$sdk_root/build-tools/37.0.0/aapt2" || {
+            echo "Android Build Tools 37.0.0 are missing from this runner." >&2
+            exit 1
+          }
 
       - name: Run unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
@@ -112,13 +118,19 @@ jobs:
         with:
           cmdline-tools-version: 14742923
 
-      - name: Install compile SDK and build tools
+      - name: Verify Android SDK 37 and build tools
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --channel=3 \
-            "platforms;android-37" \
-            "build-tools;37.0.0"
+          sdk_root="$ANDROID_SDK_ROOT"
+          test -f "$sdk_root/platforms/android-37/android.jar" || {
+            echo "Android SDK platform 37 is missing from this runner." >&2
+            exit 1
+          }
+          test -x "$sdk_root/build-tools/37.0.0/aapt2" || {
+            echo "Android Build Tools 37.0.0 are missing from this runner." >&2
+            exit 1
+          }
 
       - name: Configure and validate release signing
         shell: bash
@@ -219,11 +231,19 @@ jobs:
         with:
           cmdline-tools-version: 14742923
 
-      - name: Install APK verification tools
+      - name: Verify Android SDK 37 and build tools
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --channel=3 "build-tools;37.0.0"
+          sdk_root="$ANDROID_SDK_ROOT"
+          test -x "$sdk_root/build-tools/37.0.0/aapt2" || {
+            echo "Android Build Tools 37.0.0 are missing from this runner." >&2
+            exit 1
+          }
+          test -x "$sdk_root/build-tools/37.0.0/apksigner" || {
+            echo "Android Build Tools 37.0.0 apksigner is missing from this runner." >&2
+            exit 1
+          }
 
       - name: Download release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
