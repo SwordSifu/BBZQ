@@ -24,6 +24,9 @@ object ModuleSettings {
     const val KEY_UNLOCK_VIDEO_FEATURES_UI_ENABLED = "unlock_video_features_ui_enabled"
     const val KEY_UNLOCK_HIGHEST_BITRATE_ENABLED = "unlock_highest_bitrate_enabled"
     const val KEY_AVOID_HDR_DOLBY_ENABLED = "avoid_hdr_dolby_enabled"
+    const val KEY_HALF_SCREEN_QUALITY = "half_screen_quality"
+    const val KEY_FULL_SCREEN_QUALITY = "full_screen_quality"
+    const val KEY_VIDEO_DOWNLOAD_ENABLED = "video_download_enabled"
     const val KEY_AUTO_LIKE_VIDEO_DETAIL_ENABLED = "auto_like_video_detail_enabled"
     const val KEY_PLAYER_TRANSPARENT_STATUS_BAR_ENABLED = "player_transparent_status_bar_enabled"
     const val KEY_HIDE_PLAYER_PORTRAIT_CONTROL_ENABLED = "hide_player_portrait_control_enabled"
@@ -66,6 +69,7 @@ object ModuleSettings {
     const val KEY_SKIP_MINI_GAME_REWARD_AD_ENABLED = "skip_mini_game_reward_ad_enabled"
     const val KEY_BLOCK_LIVE_RESERVATION_ENABLED = "block_live_reservation_enabled"
     const val KEY_BLOCK_LIVE_ROOM_QOE_POPUP_ENABLED = "block_live_room_qoe_popup_enabled"
+    const val KEY_REMOVE_LIVE_ROOM_BLUR_MASK_ENABLED = "remove_live_room_blur_mask_enabled"
     const val KEY_DISABLE_LONG_PRESS_COPY_ENABLED = "disable_long_press_copy_enabled"
     const val KEY_ENHANCE_LONG_PRESS_COPY_ENABLED = "enhance_long_press_copy_enabled"
     const val KEY_CUSTOM_BOTTOM_BAR_ENABLED = "custom_bottom_bar_enabled"
@@ -238,6 +242,18 @@ object ModuleSettings {
         ExportableConfigSpec(KEY_HIDE_PLAYER_PORTRAIT_CONTROL_ENABLED, ExportableValueType.BOOLEAN) {
             it.getBoolean(KEY_HIDE_PLAYER_PORTRAIT_CONTROL_ENABLED, false)
         },
+        ExportableConfigSpec(KEY_AVOID_HDR_DOLBY_ENABLED, ExportableValueType.BOOLEAN) {
+            it.getBoolean(KEY_AVOID_HDR_DOLBY_ENABLED, false)
+        },
+        ExportableConfigSpec(KEY_HALF_SCREEN_QUALITY, ExportableValueType.INT) {
+            getHalfScreenQuality(it)
+        },
+        ExportableConfigSpec(KEY_FULL_SCREEN_QUALITY, ExportableValueType.INT) {
+            getFullScreenQuality(it)
+        },
+        ExportableConfigSpec(KEY_VIDEO_DOWNLOAD_ENABLED, ExportableValueType.BOOLEAN) {
+            it.getBoolean(KEY_VIDEO_DOWNLOAD_ENABLED, false)
+        },
         ExportableConfigSpec(KEY_PLAYER_TRIPLE_SPEED_ENABLED, ExportableValueType.BOOLEAN) {
             it.getBoolean(KEY_PLAYER_TRIPLE_SPEED_ENABLED, false)
         },
@@ -276,6 +292,7 @@ object ModuleSettings {
         ExportableConfigSpec(KEY_SKIP_MINI_GAME_REWARD_AD_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_SKIP_MINI_GAME_REWARD_AD_ENABLED, true) },
         ExportableConfigSpec(KEY_BLOCK_LIVE_RESERVATION_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_LIVE_RESERVATION_ENABLED, false) },
         ExportableConfigSpec(KEY_BLOCK_LIVE_ROOM_QOE_POPUP_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_BLOCK_LIVE_ROOM_QOE_POPUP_ENABLED, false) },
+        ExportableConfigSpec(KEY_REMOVE_LIVE_ROOM_BLUR_MASK_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_REMOVE_LIVE_ROOM_BLUR_MASK_ENABLED, false) },
         ExportableConfigSpec(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, false) },
         ExportableConfigSpec(KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_ENHANCE_LONG_PRESS_COPY_ENABLED, false) },
         ExportableConfigSpec(KEY_CUSTOM_BOTTOM_BAR_ENABLED, ExportableValueType.BOOLEAN) { it.getBoolean(KEY_CUSTOM_BOTTOM_BAR_ENABLED, false) },
@@ -383,6 +400,46 @@ object ModuleSettings {
     fun isAvoidHdrDolbyEnabled(prefs: SharedPreferences): Boolean =
         isUnlockHighestBitrateEnabled(prefs) &&
             prefs.getBoolean(KEY_AVOID_HDR_DOLBY_ENABLED, false)
+
+    data class QualityOption(val qn: Int, val label: String)
+
+    val halfScreenQualityOptions = listOf(
+        QualityOption(0, "默认"),
+        QualityOption(1, "跟随全屏清晰度"),
+        QualityOption(16, "360P 流畅"),
+        QualityOption(32, "480P 清晰"),
+        QualityOption(64, "720P 高清"),
+        QualityOption(74, "720P60 高帧率"),
+        QualityOption(80, "1080P 高清"),
+        QualityOption(112, "1080P 高码率"),
+        QualityOption(116, "1080P60 高帧率"),
+        QualityOption(120, "4K 超清"),
+        QualityOption(127, "8K 超高清"),
+    )
+
+    val fullScreenQualityOptions = listOf(
+        QualityOption(0, "默认"),
+        QualityOption(16, "360P 流畅"),
+        QualityOption(32, "480P 清晰"),
+        QualityOption(64, "720P 高清"),
+        QualityOption(74, "720P60 高帧率"),
+        QualityOption(80, "1080P 高清"),
+        QualityOption(112, "1080P 高码率"),
+        QualityOption(116, "1080P60 高帧率"),
+        QualityOption(120, "4K 超清"),
+        QualityOption(127, "8K 超高清"),
+    )
+
+    fun getHalfScreenQuality(prefs: SharedPreferences): Int {
+        return prefs.getInt(KEY_HALF_SCREEN_QUALITY, 0)
+    }
+
+    fun getFullScreenQuality(prefs: SharedPreferences): Int {
+        return prefs.getInt(KEY_FULL_SCREEN_QUALITY, 0)
+    }
+
+    fun isVideoDownloadEnabled(prefs: SharedPreferences): Boolean =
+        isTryFreeQualitySettingsVisible(prefs) && prefs.getBoolean(KEY_VIDEO_DOWNLOAD_ENABLED, false)
 
     fun isPlayerTransparentStatusBarEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_PLAYER_TRANSPARENT_STATUS_BAR_ENABLED, false)
@@ -717,6 +774,9 @@ object ModuleSettings {
 
     fun isBlockLiveRoomQoePopupEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_BLOCK_LIVE_ROOM_QOE_POPUP_ENABLED, false)
+
+    fun isRemoveLiveRoomBlurMaskEnabled(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_REMOVE_LIVE_ROOM_BLUR_MASK_ENABLED, false)
 
     fun isDisableLongPressCopyEnabled(prefs: SharedPreferences): Boolean =
         prefs.getBoolean(KEY_DISABLE_LONG_PRESS_COPY_ENABLED, false)

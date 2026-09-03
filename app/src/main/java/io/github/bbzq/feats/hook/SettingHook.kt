@@ -15,30 +15,33 @@ import java.lang.reflect.Proxy
 
 class SettingHook(env: RoamingEnv) : BaseRoamingHook(env) {
     override fun startHook() {
-        val helpFragment = HELP_FRAGMENT_CLASSES.firstNotNullOfOrNull(classLoader::findClassOrNull) ?: run {
-            log("SettingHook skipped: HelpFragment unavailable")
-            return
+        var installed = 0
+        HELP_FRAGMENT_CLASSES.mapNotNull(classLoader::findClassOrNull).distinct().forEach { fragmentClass ->
+            val activityCreated = fragmentClass.methodsNamed("onActivityCreated")
+                .firstOrNull { it.parameterCount == 1 }
+            if (activityCreated != null) {
+                env.hookAfter(activityCreated) { param ->
+                    param.thisObject?.let(::replaceJoinUsEntry)
+                }
+                installed++
+                log("SettingHook installed on ${fragmentClass.name}")
+            }
         }
-        val activityCreated = helpFragment.methodsNamed("onActivityCreated")
-            .firstOrNull { it.parameterCount == 1 } ?: run {
-            log("SettingHook skipped: HelpFragment.onActivityCreated unavailable")
-            return
+        if (installed == 0) {
+            log("SettingHook skipped: No HelpFragment classes available")
+        } else {
+            log("startHook: Setting replaces About Bilibili join-us entry in $installed fragment class(es)")
         }
-        env.hookAfter(activityCreated) { param ->
-            param.thisObject?.let(::replaceJoinUsEntry)
-        }
-        log("startHook: Setting replaces About Bilibili join-us entry")
     }
 
     private fun replaceJoinUsEntry(fragment: Any) {
         val activity = fragment.callMethod("getActivity") as? Activity ?: return
-        val entry = JOIN_US_KEYS.firstNotNullOfOrNull { key ->
-            fragment.callMethod("findPreference", key)
-        } ?: return
+        val entry = findJoinUsPreference(fragment, activity) ?: return
         entry.callMethod("setTitle", ENTRY_TITLE)
         entry.callMethod("setSummary", ENTRY_SUMMARY)
         entry.callMethod("setPersistent", false)
         entry.callMethod("setSelectable", true)
+        runCatching { entry.callMethod("setVisible", true) }
 
         val setter = entry.javaClass.methodsNamed("setOnPreferenceClickListener")
             .firstOrNull { it.parameterCount == 1 && it.parameterTypes[0].isInterface } ?: return
@@ -53,6 +56,42 @@ class SettingHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
         setter.invoke(entry, listener)
         log("Replaced About Bilibili join-us entry in ${fragment.javaClass.name}")
+    }
+
+    private fun findJoinUsPreference(fragment: Any, activity: Activity): Any? {
+        JOIN_US_KEYS.firstNotNullOfOrNull { key ->
+            fragment.callMethod("findPreference", key)
+        }?.let { return it }
+
+        val resId = runCatching {
+            activity.resources.getIdentifier("pref_key_joinus", "string", activity.packageName)
+        }.getOrNull() ?: 0
+        if (resId != 0) {
+            val keyStr = runCatching { activity.getString(resId) }.getOrNull()
+            if (keyStr != null) {
+                fragment.callMethod("findPreference", keyStr)?.let { return it }
+            }
+        }
+
+        return findJoinUsFromPreferenceGroup(fragment.callMethod("getPreferenceScreen"))
+    }
+
+    private fun findJoinUsFromPreferenceGroup(group: Any?): Any? {
+        if (group == null) return null
+        val count = (group.callMethod("getPreferenceCount") as? Number)?.toInt() ?: return null
+        for (i in 0 until count) {
+            val pref = group.callMethod("getPreference", i) ?: continue
+            val key = pref.callMethod("getKey")?.toString().orEmpty()
+            val title = pref.callMethod("getTitle")?.toString().orEmpty()
+            if (key in JOIN_US_KEYS || key.contains("join", ignoreCase = true) || title.contains("加入")) {
+                return pref
+            }
+            if (pref.javaClass.name.contains("PreferenceGroup") || pref.javaClass.name.contains("PreferenceCategory")) {
+                val found = findJoinUsFromPreferenceGroup(pref)
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     private fun runtimeSnapshot() =
@@ -78,6 +117,8 @@ class SettingHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private val HELP_FRAGMENT_CLASSES = arrayOf(
             "com.bilibili.app.preferences.fragment.HelpFragment",
             "com.bilibili.p4439app.preferences.fragment.HelpFragment",
+            "com.bilibili.app.preferences.fragment.WideHelpFragment",
+            "com.bilibili.p4439app.preferences.fragment.WideHelpFragment",
         )
     }
 }

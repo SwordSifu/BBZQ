@@ -46,6 +46,7 @@ data class BiliHookSymbols(
     val tripleSpeed: TripleSpeedSymbols? = null,
     val customTheme: CustomThemeSymbols? = null,
     val customSkin: CustomSkinSymbols? = null,
+    val videoQuality: VideoQualitySymbols? = null,
 ) {
     fun isUsableWith(expectedFingerprint: String): Boolean =
         cacheSchemaVersion == CACHE_SCHEMA_VERSION &&
@@ -88,9 +89,10 @@ data class BiliHookSymbols(
         .putOpt("tripleSpeed", tripleSpeed?.toJson())
         .putOpt("customTheme", customTheme?.toJson())
         .putOpt("customSkin", customSkin?.toJson())
+        .putOpt("videoQuality", videoQuality?.toJson())
 
     companion object {
-        const val CACHE_SCHEMA_VERSION = 35
+        const val CACHE_SCHEMA_VERSION = 38
 
         fun fromJson(raw: String?): BiliHookSymbols? {
             if (raw.isNullOrBlank()) return null
@@ -137,6 +139,7 @@ data class BiliHookSymbols(
                     tripleSpeed = obj.optJSONObject("tripleSpeed")?.let(TripleSpeedSymbols::fromJson),
                     customTheme = obj.optJSONObject("customTheme")?.let(CustomThemeSymbols::fromJson),
                     customSkin = obj.optJSONObject("customSkin")?.let(CustomSkinSymbols::fromJson),
+                    videoQuality = obj.optJSONObject("videoQuality")?.let(VideoQualitySymbols::fromJson),
                 )
             }.getOrNull()
         }
@@ -144,7 +147,7 @@ data class BiliHookSymbols(
 }
 
 object DexKitRuleVersions {
-    const val CURRENT = 54
+    const val CURRENT = 58
 }
 
 data class HookPointStatus(
@@ -2135,6 +2138,60 @@ data class RestoredCustomThemeSymbols(
     val skinResponseUserGarbSetter: Method?,
     val skinResponseLoadEquipSetter: Method?,
     val skinResolveMethod: Method?,
+)
+
+data class VideoQualitySymbols(
+    val autoSupremumQualityConstructor: ConstructorDescriptor? = null,
+    val qualityStrategySelectMethod: MethodDescriptor? = null,
+    val playerPreloadGetMethods: List<MethodDescriptor> = emptyList(),
+    val playerQualityServiceMethods: List<MethodDescriptor> = emptyList(),
+    val playerSettingHelperGetDefaultQnMethod: MethodDescriptor? = null,
+    val evidence: String,
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .putOpt("autoSupremumQualityConstructor", autoSupremumQualityConstructor?.toJson())
+        .putOpt("qualityStrategySelectMethod", qualityStrategySelectMethod?.toJson())
+        .put("playerPreloadGetMethods", playerPreloadGetMethods.toJsonArray { it.toJson() })
+        .put("playerQualityServiceMethods", playerQualityServiceMethods.toJsonArray { it.toJson() })
+        .putOpt("playerSettingHelperGetDefaultQnMethod", playerSettingHelperGetDefaultQnMethod?.toJson())
+        .put("evidence", evidence)
+
+    fun restore(classLoader: ClassLoader): RestoredVideoQualitySymbols {
+        val autoSupremumCtor = autoSupremumQualityConstructor?.let { descriptor ->
+            val owner = classLoader.loadClassOrNull(descriptor.declaringClassName) ?: return@let null
+            descriptor.restore(owner)
+        }
+        val strategyMethod = qualityStrategySelectMethod?.restoreOptional(classLoader)
+        val preloadMethods = playerPreloadGetMethods.restoreAvailable(classLoader)
+        val qualityServiceMethods = playerQualityServiceMethods.restoreAvailable(classLoader)
+        val settingDefaultQnMethod = playerSettingHelperGetDefaultQnMethod?.restoreOptional(classLoader)
+        return RestoredVideoQualitySymbols(
+            autoSupremumQualityConstructor = autoSupremumCtor,
+            qualityStrategySelectMethod = strategyMethod,
+            playerPreloadGetMethods = preloadMethods,
+            playerQualityServiceMethods = qualityServiceMethods,
+            playerSettingHelperGetDefaultQnMethod = settingDefaultQnMethod,
+        )
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): VideoQualitySymbols = VideoQualitySymbols(
+            autoSupremumQualityConstructor = obj.optJSONObject("autoSupremumQualityConstructor")?.let(ConstructorDescriptor::fromJson),
+            qualityStrategySelectMethod = obj.optJSONObject("qualityStrategySelectMethod")?.let(MethodDescriptor::fromJson),
+            playerPreloadGetMethods = obj.optJSONArray("playerPreloadGetMethods").toList { MethodDescriptor.fromJson(it) },
+            playerQualityServiceMethods = obj.optJSONArray("playerQualityServiceMethods").toList { MethodDescriptor.fromJson(it) },
+            playerSettingHelperGetDefaultQnMethod = obj.optJSONObject("playerSettingHelperGetDefaultQnMethod")?.let(MethodDescriptor::fromJson),
+            evidence = obj.optString("evidence", "-"),
+        )
+    }
+}
+
+data class RestoredVideoQualitySymbols(
+    val autoSupremumQualityConstructor: Constructor<*>?,
+    val qualityStrategySelectMethod: Method?,
+    val playerPreloadGetMethods: List<Method>,
+    val playerQualityServiceMethods: List<Method>,
+    val playerSettingHelperGetDefaultQnMethod: Method?,
 )
 
 data class MethodDescriptor(

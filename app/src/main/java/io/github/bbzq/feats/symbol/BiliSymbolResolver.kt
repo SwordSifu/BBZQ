@@ -142,6 +142,7 @@ object BiliSymbolResolver {
     private const val HP_TRIPLE_SPEED = "TripleSpeedHook.ExperimentReader"
     private const val HP_CUSTOM_THEME = "CustomThemeHook.ThemeStore"
     private const val HP_CUSTOM_SKIN = "CustomSkinHook.GarbResolver"
+    private const val HP_VIDEO_QUALITY = "VideoQualityHook.QualityStrategy"
     private const val PLAY_SPEED_EXPERIMENT_PREF_KEY = "sp_play_speed_experiment"
     private const val HIGH_FRAME_RATE_SPEED_RESET_LOG = "reset 3x speed because target quality"
     private const val PLAY_SPEED_UTILS_CLASS = "com.bilibili.playerbizcommonv2.utils.D"
@@ -303,7 +304,7 @@ object BiliSymbolResolver {
             scanHomeTopBar(classLoader)
         }
         val bottomBar = scanHookPoint(HP_BOTTOM_BAR, hookPoints, scanErrors, log) {
-            scanBottomBar(classLoader)
+            scanBottomBar(classLoader, ::bridge)
         }
         val homeRecommendFeed = scanHookPoint(HP_HOME_RECOMMEND_FEED, hookPoints, scanErrors, log) {
             scanHomeRecommendFeed(classLoader)
@@ -340,6 +341,9 @@ object BiliSymbolResolver {
         }
         val customSkin = scanOptionalHookPoint(HP_CUSTOM_SKIN, hookPoints, scanErrors, log) {
             scanCustomSkin(classLoader, ::bridge)
+        }
+        val videoQuality = scanOptionalHookPoint(HP_VIDEO_QUALITY, hookPoints, scanErrors, log) {
+            scanVideoQuality(classLoader, ::bridge)
         }
 
         runCatching { bridge?.close() }
@@ -379,6 +383,7 @@ object BiliSymbolResolver {
             tripleSpeed = tripleSpeed,
             customTheme = customTheme,
             customSkin = customSkin,
+            videoQuality = videoQuality,
         )
     }
 
@@ -904,6 +909,83 @@ object BiliSymbolResolver {
             evidence = "fragments=${methods.size},preference=${preferenceClass.name}",
         )
         return SymbolScanResult.Found(symbols, methods.joinToString("|") { it.declaringClass.name }, symbols.evidence)
+    }
+
+    private fun scanVideoQuality(
+        classLoader: ClassLoader,
+        bridge: () -> DexKitBridge?,
+    ): SymbolScanResult<VideoQualitySymbols> {
+        val currentBridge = bridge() ?: return SymbolScanResult.Missing("DexKitBridge unavailable")
+        
+        // 1. AutoSupremumQuality constructor
+        val autoSupremumQualityClass = runCatching {
+            currentBridge.findClass(
+                FindClass.create().matcher(ClassMatcher.create().usingStrings("AutoSupremumQuality(loginHalfScreen=")),
+            ).mapNotNull { classLoader.loadClassOrNull(it.name) }.firstOrNull()
+        }.getOrNull()
+
+        val autoSupremumCtor = autoSupremumQualityClass?.declaredConstructors?.firstOrNull { ctor ->
+            ctor.parameterTypes.size == 6 && ctor.parameterTypes.all { it == Int::class.javaPrimitiveType }
+        }?.apply { isAccessible = true }
+
+        // 2. QualityStrategyProvider selectQuality method
+        val buildStrategyMethod = runCatching {
+            currentBridge.findMethod(
+                FindMethod.create().matcher(MethodMatcher.create().usingStrings("Quality Strategy share:")),
+            ).mapNotNull { runCatching { it.getMethodInstance(classLoader) }.getOrNull() }.firstOrNull()
+        }.getOrNull()
+
+        val providerClass = buildStrategyMethod?.declaringClass
+        val selectQualityMethod = providerClass?.declaredMethods?.firstOrNull { method ->
+            method.parameterCount == 3 &&
+                autoSupremumQualityClass != null &&
+                method.parameterTypes[0] == autoSupremumQualityClass &&
+                method.parameterTypes[1] == Boolean::class.javaPrimitiveType &&
+                method.parameterTypes[2] == Boolean::class.javaPrimitiveType
+        }?.apply { isAccessible = true }
+
+        // 3. PlayerPreloadHolder (PreloadData(type=)
+        val preloadMethods = runCatching {
+            val preloadClass = currentBridge.findClass(
+                FindClass.create().matcher(ClassMatcher.create().usingStrings("PreloadData(type=")),
+            ).mapNotNull { classLoader.loadClassOrNull(it.name) }.firstOrNull()
+            val outerHolderClass = preloadClass?.declaringClass
+            outerHolderClass?.declaredMethods?.filter {
+                Modifier.isPublic(it.modifiers) && it.parameterCount == 1
+            }?.onEach { it.isAccessible = true }.orEmpty()
+        }.getOrElse { emptyList() }
+
+        // 4. PlayerQualityService (player.unite_login_qn)
+        val qualityServiceMethods = runCatching {
+            currentBridge.findMethod(
+                FindMethod.create().matcher(MethodMatcher.create().usingStrings("player.unite_login_qn")),
+            ).mapNotNull { runCatching { it.getMethodInstance(classLoader) }.getOrNull() }
+                .onEach { it.isAccessible = true }
+        }.getOrElse { emptyList() }
+
+        // 5. PlayerSettingHelper (quality settings:)
+        val defaultQnMethod = runCatching {
+            currentBridge.findMethod(
+                FindMethod.create().matcher(MethodMatcher.create().usingStrings("quality settings:")),
+            ).mapNotNull { runCatching { it.getMethodInstance(classLoader) }.getOrNull() }
+                .firstOrNull { it.returnType == Int::class.javaPrimitiveType || it.returnType == Int::class.javaObjectType }
+                ?.apply { isAccessible = true }
+        }.getOrNull()
+
+        val symbols = VideoQualitySymbols(
+            autoSupremumQualityConstructor = autoSupremumCtor?.let(ConstructorDescriptor::of),
+            qualityStrategySelectMethod = selectQualityMethod?.let(MethodDescriptor::of),
+            playerPreloadGetMethods = preloadMethods.map(MethodDescriptor::of),
+            playerQualityServiceMethods = qualityServiceMethods.map(MethodDescriptor::of),
+            playerSettingHelperGetDefaultQnMethod = defaultQnMethod?.let(MethodDescriptor::of),
+            evidence = "autoSupremum=${autoSupremumCtor != null},strategy=${selectQualityMethod != null},preload=${preloadMethods.size},service=${qualityServiceMethods.size},setting=${defaultQnMethod != null}",
+        )
+
+        return if (autoSupremumCtor != null || selectQualityMethod != null || preloadMethods.isNotEmpty() || qualityServiceMethods.isNotEmpty()) {
+            SymbolScanResult.Found(symbols, autoSupremumQualityClass?.name ?: "VideoQuality", symbols.evidence)
+        } else {
+            SymbolScanResult.Missing("video quality hook points not found")
+        }
     }
 
     private fun scanCustomSkin(
@@ -1696,35 +1778,41 @@ object BiliSymbolResolver {
             ?: return SymbolScanResult.Missing("story detail class not found")
         val storyPagerPlayer = classLoader.loadClassOrNull(STORY_PAGER_PLAYER)
             ?: return SymbolScanResult.Missing("story pager player class not found")
-        val commentContainerInterface = STORY_COMMENT_CONTAINER_INTERFACE_CLASSES
-            .firstNotNullOfOrNull(classLoader::loadClassOrNull)
-            ?: return SymbolScanResult.Missing("story comment container interface not found")
-        val commentCallback = STORY_COMMENT_CALLBACK_CLASSES.firstNotNullOfOrNull(classLoader::loadClassOrNull)
-            ?: return SymbolScanResult.Missing("story comment callback class not found")
-        val commentOffsetCallback = STORY_COMMENT_OFFSET_CALLBACK_CLASSES.firstNotNullOfOrNull(classLoader::loadClassOrNull)
-            ?: return SymbolScanResult.Missing("story comment offset callback class not found")
-        val commentPlayerCallback = STORY_COMMENT_PLAYER_CALLBACK_CLASSES.firstNotNullOfOrNull(classLoader::loadClassOrNull)
-            ?: return SymbolScanResult.Missing("story comment player callback class not found")
-        val verticalContainer = STORY_COMMENT_VERTICAL_CONTAINER_CLASSES.firstNotNullOfOrNull(classLoader::loadClassOrNull)
-            ?: return SymbolScanResult.Missing("story vertical comment container class not found")
-        val landscapeContainer = STORY_COMMENT_LANDSCAPE_CONTAINER_CLASSES
-            .firstNotNullOfOrNull(classLoader::loadClassOrNull)
         val interactLayerService = classLoader.loadClassOrNull(INTERACT_LAYER_SERVICE)
             ?: return SymbolScanResult.Missing("interact layer service class not found")
         val introCommentService = classLoader.loadClassOrNull(STORY_INTRO_COMMENT_SERVICE)
 
-        val showSignature = commentContainerInterface.allMethods().firstOrNull { method ->
-            method.name == "a" &&
-                method.returnType == Void.TYPE &&
-                method.parameterCount == 8 &&
-                method.parameterTypes[0] == storyDetail &&
-                method.parameterTypes[2] == Long::class.javaPrimitiveType &&
-                method.parameterTypes[3] == Long::class.javaPrimitiveType &&
-                method.parameterTypes[4] == String::class.java &&
-                method.parameterTypes[5] == commentCallback &&
-                method.parameterTypes[6] == commentOffsetCallback &&
-                method.parameterTypes[7] == commentPlayerCallback
-        }?.parameterTypes ?: return SymbolScanResult.Missing("story comment show signature not found")
+        var matchedSignature: Array<Class<*>>? = null
+        var matchedVerticalContainer: Class<*>? = null
+        var matchedLandscapeContainer: Class<*>? = null
+
+        for (name in STORY_COMMENT_OUTER_CANDIDATES) {
+            val prefix = "com.bilibili.video.story.action.$name"
+            val containerInterface = classLoader.loadClassOrNull("$prefix\$b") ?: continue
+            val sig = containerInterface.allMethods().firstOrNull { method ->
+                method.name == "a" &&
+                    method.returnType == Void.TYPE &&
+                    method.parameterCount == 8 &&
+                    method.parameterTypes[0] == storyDetail &&
+                    method.parameterTypes[2] == Long::class.javaPrimitiveType &&
+                    method.parameterTypes[3] == Long::class.javaPrimitiveType &&
+                    method.parameterTypes[4] == String::class.java
+            }?.parameterTypes ?: continue
+
+            matchedSignature = sig
+            matchedVerticalContainer = classLoader.loadClassOrNull("$prefix\$VerticalContainerV2")
+                ?: classLoader.loadClassOrNull("$prefix\$f")
+            matchedLandscapeContainer = classLoader.loadClassOrNull("$prefix\$d")
+            break
+        }
+
+        val showSignature = matchedSignature ?: return SymbolScanResult.Missing("story comment show signature not found")
+        val verticalContainer = matchedVerticalContainer
+            ?: STORY_COMMENT_VERTICAL_CONTAINER_CLASSES.firstNotNullOfOrNull(classLoader::loadClassOrNull)
+            ?: return SymbolScanResult.Missing("story vertical comment container class not found")
+        val landscapeContainer = matchedLandscapeContainer
+            ?: STORY_COMMENT_LANDSCAPE_CONTAINER_CLASSES.firstNotNullOfOrNull(classLoader::loadClassOrNull)
+
         val showMethods = buildList {
             verticalContainer.findMethod("a", Void.TYPE, *showSignature)
                 ?.apply { isAccessible = true }
@@ -2176,7 +2264,7 @@ object BiliSymbolResolver {
                 it.parameterTypes.contentEquals(arrayOf(Menu::class.java, MenuInflater::class.java))
         }?.apply { isAccessible = true }
 
-        val baseFragmentClass = classLoader.loadClassOrNull(HOME_BASE_MAIN_FRAME_FRAGMENT)
+        val baseFragmentClass = HOME_BASE_MAIN_FRAME_FRAGMENTS.firstNotNullOfOrNull(classLoader::loadClassOrNull)
         val baseOnViewCreated = baseFragmentClass?.declaredMethods?.firstOrNull {
             it.name == "onViewCreated" &&
                 it.parameterTypes.contentEquals(arrayOf(View::class.java, Bundle::class.java))
@@ -2223,8 +2311,12 @@ object BiliSymbolResolver {
 
     private fun scanBottomBar(
         classLoader: ClassLoader,
+        bridge: () -> DexKitBridge?,
     ): SymbolScanResult<BottomBarSymbols> {
-        val tabHostClasses = BOTTOM_TAB_HOST_CLASSES.mapNotNull(classLoader::loadClassOrNull)
+        val tabHostClasses = buildSet {
+            addAll(BOTTOM_TAB_HOST_CLASSES.mapNotNull(classLoader::loadClassOrNull))
+            addAll(findClassNamesBySimpleName(bridge, "TabHost").mapNotNull(classLoader::loadClassOrNull))
+        }
         val tabHostSetTabsMethods = tabHostClasses
             .asSequence()
             .flatMap { it.allMethods() }
@@ -2246,18 +2338,19 @@ object BiliSymbolResolver {
             }
             .distinctBy(Method::toGenericString)
             .toList()
-        val baseOnViewCreatedMethods = classLoader.loadClassOrNull(HOME_BASE_MAIN_FRAME_FRAGMENT)
-            ?.allMethods()
-            ?.filter { method ->
+        val baseOnViewCreatedMethods = HOME_BASE_MAIN_FRAME_FRAGMENTS
+            .asSequence()
+            .mapNotNull(classLoader::loadClassOrNull)
+            .flatMap { it.allMethods() }
+            .filter { method ->
                 method.name == "onViewCreated" &&
                     method.parameterCount == 2 &&
                     method.parameterTypes[0] == View::class.java &&
                     method.parameterTypes[1] == Bundle::class.java &&
                     method.returnType == Void.TYPE
             }
-            ?.distinctBy(Method::toGenericString)
-            ?.toList()
-            .orEmpty()
+            .distinctBy(Method::toGenericString)
+            .toList()
 
         if (tabHostSetTabsMethods.isEmpty() || tabHostGetTabsMethods.isEmpty()) {
             return SymbolScanResult.Missing("bottom bar hook points not found")
@@ -2353,7 +2446,11 @@ object BiliSymbolResolver {
             } ?: return@mapNotNull null
             val itemsField = responseClass.allFields()
                 .filter { List::class.java.isAssignableFrom(it.type) }
-                .singleOrNull()
+                .firstOrNull {
+                    it.name.startsWith("cards", ignoreCase = true) ||
+                        it.name.startsWith("relates", ignoreCase = true) ||
+                        it.name.startsWith("items", ignoreCase = true)
+                } ?: responseClass.allFields().filter { List::class.java.isAssignableFrom(it.type) }.singleOrNull()
             RelateResponseGetItemsSymbols(MethodDescriptor.of(getItems), itemsField?.let(FieldDescriptor::of))
         }.distinctBy { it.getItems.declaringClassName + "#" + it.getItems.name }
 
@@ -2819,6 +2916,7 @@ object BiliSymbolResolver {
         val playerCoreReady = playerCoreCurrent.isNotEmpty() && playerCoreState.isNotEmpty() && playerCoreSeek.isNotEmpty()
         val cardReady = cardCurrent.isNotEmpty() && cardState.isNotEmpty() && cardSeek.isNotEmpty()
         val storyReady = storyCurrent.isNotEmpty() && storySeek.isNotEmpty()
+        val controllerReady = playerCoreReady || cardReady || storyReady
         val hookPoints = listOf(
             childHookPoint(HP_SKIP_VIDEO_AD_PLAY_VIEW, playViewMethods.isNotEmpty(), "play view hook methods not found", "methods=${playViewMethods.size}"),
             skipVideoAdControllerHookPoint(
@@ -2844,7 +2942,7 @@ object BiliSymbolResolver {
         )
         val missingReason = when {
             playViewMethods.isEmpty() -> "skip video ad play view hook points not found"
-            !playerCoreReady && !cardReady -> "skip video ad controller hook points not found"
+            !controllerReady -> "skip video ad controller hook points not found"
             else -> null
         }
         if (missingReason != null) {
@@ -3619,8 +3717,8 @@ object BiliSymbolResolver {
 
     private fun Class<*>.isCommentActionBaseType(actionBases: List<Class<*>> = emptyList()): Boolean {
         if (actionBases.any { it == this || it.isAssignableFrom(this) || this.isAssignableFrom(it) }) return true
-        if (name == "Kj.AbstractC8070c") return true
-        if (simpleName.contains("Action", ignoreCase = true) && name.startsWith("Kj.")) return true
+        if (name == "Kj.AbstractC8070c" || name == "Wk.AbstractC24337c" || name == "Wk.c") return true
+        if (simpleName.contains("Action", ignoreCase = true) && (name.startsWith("Kj.") || name.startsWith("Wk."))) return true
         return allMethods().any { method ->
             method.name == "a" &&
                 method.returnType == Void.TYPE &&
@@ -4048,12 +4146,9 @@ object BiliSymbolResolver {
     private const val STORY_RIGHT_MODULE = "com.bilibili.video.story.module.StoryRightModule"
     private const val STORY_BOTTOM_MODULE = "com.bilibili.video.story.module.StoryBottomModule"
     private const val STORY_DETAIL = "com.bilibili.video.story.StoryDetail"
-    private val STORY_COMMENT_CONTAINER_INTERFACE_CLASSES = (listOf("StoryCommentHelper\$b", "C\$b", "B\$b") + ('D'..'Z').map { "$it\$b" }).map { "com.bilibili.video.story.action.$it" }.toTypedArray()
+    private val STORY_COMMENT_OUTER_CANDIDATES = listOf("StoryCommentHelper", "C", "B") + ('D'..'Z').map { it.toString() }
     private val STORY_COMMENT_VERTICAL_CONTAINER_CLASSES = (listOf("StoryCommentHelper\$VerticalContainerV2", "C\$f", "B\$f") + ('D'..'Z').map { "$it\$f" }).map { "com.bilibili.video.story.action.$it" }.toTypedArray()
     private val STORY_COMMENT_LANDSCAPE_CONTAINER_CLASSES = (listOf("StoryCommentHelper\$d", "C\$d", "B\$d") + ('D'..'Z').map { "$it\$d" }).map { "com.bilibili.video.story.action.$it" }.toTypedArray()
-    private val STORY_COMMENT_CALLBACK_CLASSES = (listOf("StoryCommentHelper\$c", "C\$c", "B\$c") + ('D'..'Z').map { "$it\$c" }).map { "com.bilibili.video.story.action.$it" }.toTypedArray()
-    private val STORY_COMMENT_OFFSET_CALLBACK_CLASSES = (listOf("StoryCommentHelper\$e", "C\$e", "B\$e") + ('D'..'Z').map { "$it\$e" }).map { "com.bilibili.video.story.action.$it" }.toTypedArray()
-    private val STORY_COMMENT_PLAYER_CALLBACK_CLASSES = (listOf("StoryCommentHelper\$a", "C\$a", "B\$a") + ('D'..'Z').map { "$it\$a" }).map { "com.bilibili.video.story.action.$it" }.toTypedArray()
     private const val STORY_INTRO_COMMENT_SERVICE = "com.bilibili.video.story.action.widget.comment.p"
     private const val STORY_TAB_PACKAGE_PREFIX = "com.bilibili.video.story.tab."
     private const val KOTLIN_UNIT = "kotlin.Unit"
@@ -4084,11 +4179,19 @@ object BiliSymbolResolver {
     )
     private const val GEMINI_SIMPLE_VIEW_ENTRY = "com.bilibili.app.gemini.ui.UIComponent\$b"
     private const val HOME_MENU_ITEM_CLASS = "com.bilibili.lib.homepage.startdust.menu.a"
-    private const val HOME_BASE_MAIN_FRAME_FRAGMENT = "tv.danmaku.bili.ui.main2.basic.BaseMainFrameFragment"
+    private val HOME_BASE_MAIN_FRAME_FRAGMENTS = setOf(
+        "tv.danmaku.bili.ui.main2.basic.BaseMainFrameFragment",
+        "tv.danmaku.p9138bili.p9228ui.main2.basic.BaseMainFrameFragment",
+        "tv.danmaku.bili.ui.main2.MainFragment",
+        "tv.danmaku.p9138bili.p9228ui.main2.MainFragment",
+    )
     private const val HOME_MAIN_FRAGMENT = "tv.danmaku.bili.ui.main2.MainFragment"
     private const val HOME_DEFAULT_SEARCH_WORD_CLASS = "com.bilibili.app.comm.list.common.api.b"
     private val BOTTOM_TAB_HOST_CLASSES = setOf(
         "com.bilibili.lib.homepage.widget.TabHost",
+        "com.bilibili.p5690lib.p5708homepage.widget.TabHost",
+        "tv.danmaku.bili.ui.main2.widget.TabHost",
+        "tv.danmaku.p9138bili.p9228ui.main2.widget.TabHost",
     )
     private val PEGASUS_RESPONSE_CLASSES = arrayOf(
         "com.bilibili.pegasus.data.base.PegasusResponse",
@@ -4143,9 +4246,11 @@ object BiliSymbolResolver {
     private val COMMENT_ACTION_BASE_CLASSES = arrayOf(
         "Kj.AbstractC8070c",
         "Kj.c",
+        "Wk.AbstractC24337c",
+        "Wk.c",
     )
     private const val QUICK_REPLY_SHOW_PUBLISH_DIALOG_STRING = "ShowPublishDialog(args="
-    private val QUICK_REPLY_DIALOG_COLLECTOR_CLASSES = (4..40).flatMap { i ->
+    private val QUICK_REPLY_DIALOG_COLLECTOR_CLASSES = (1..50).flatMap { i ->
         listOf(
             "com.bilibili.app.comment3.ui.CommentContainerImpl\$attachRepository\$$i",
             "com.bilibili.p4439app.comment3.p4518ui.CommentContainerImpl\$attachRepository\$$i",
@@ -4328,6 +4433,7 @@ object BiliSymbolResolver {
         "getActivityState",
     )
     private val VIDEO_DETAIL_RELATE_RESPONSE_CLASSES = arrayOf(
+        "com.bapis.bilibili.app.viewunite.common.Relates",
         "com.bapis.bilibili.app.viewunite.v1.Relates",
         "com.bapis.bilibili.app.viewunite.v1.RelatesFeedReply",
         "com.bapis.bilibili.app.view.v1.RelatesFeedReply",

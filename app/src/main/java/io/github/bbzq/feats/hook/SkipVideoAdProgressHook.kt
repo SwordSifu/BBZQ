@@ -165,6 +165,7 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?: return null
 
         SkipVideoAdState.bindController(controller, key)
+        SkipVideoAdHook.registerRuntimePlayerController(controller)
         val durationMs = if (controller != null) {
             updateDurationFromController(key, controller)
         } else {
@@ -192,6 +193,7 @@ class SkipVideoAdProgressHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?: return null
 
         SkipVideoAdState.bindController(controller, key)
+        SkipVideoAdHook.registerRuntimePlayerController(controller)
         val durationMs = updateDurationFromController(key, controller)
         if (requestSegments && identity != null && durationMs != null && durationMs > 0L) {
             return bindProgressSegments(progressBar, identity, durationMs, listOf(controller), delayMs = 0L)

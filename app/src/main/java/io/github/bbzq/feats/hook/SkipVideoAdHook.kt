@@ -18,6 +18,7 @@ import io.github.bbzq.ModuleSettings
 import io.github.bbzq.SkipVideoAdMode
 import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.BilibiliSponsorBlock
+import io.github.bbzq.feats.MethodHookParam
 import io.github.bbzq.feats.RoamingEnv
 import io.github.bbzq.feats.allMethods
 import io.github.bbzq.feats.callMethod
@@ -26,6 +27,7 @@ import io.github.bbzq.feats.hookBefore
 import io.github.bbzq.feats.symbol.RestoredSkipVideoAdSymbols
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -48,6 +50,10 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private val noArgMethods = ConcurrentHashMap<String, Method>()
     private val missingNoArgMethods = ConcurrentHashMap.newKeySet<String>()
     private val seekMethodsByControllerClass = ConcurrentHashMap<Class<*>, List<Method>>()
+    private val hookedCurrentPositionMethods = ConcurrentHashMap.newKeySet<String>()
+    private val hookedStateMethods = ConcurrentHashMap.newKeySet<String>()
+    private val registeredRuntimeControllerClasses = ConcurrentHashMap.newKeySet<Class<*>>()
+    private val runtimeControllerLock = Any()
     private val playerCoreService: Any?
         get() = playerCoreServiceRef?.get()
     private val cardPlayerContext: Any?
@@ -70,6 +76,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             }
             return
         }
+        activeInstance = this
         ensureActivityTracking()
         SkipVideoAdState.observeMarkerDrawn(::detectAfterMarkerDrawn)
         cacheSeekMethods(symbols)
@@ -254,111 +261,156 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun cacheSeekMethods(symbols: RestoredSkipVideoAdSymbols) {
         seekMethodsByControllerClass.clear()
-        (symbols.playerCoreSeekMethods + symbols.cardSeekMethods + symbols.storySeekMethods)
+        cacheSeekMethods(symbols.playerCoreSeekMethods + symbols.cardSeekMethods + symbols.storySeekMethods)
+    }
+
+    private fun cacheSeekMethods(methods: List<Method>) {
+        methods
             .groupBy { it.declaringClass }
             .forEach { (type, methods) ->
-                seekMethodsByControllerClass[type] = methods.distinctBy(Method::toGenericString)
+                seekMethodsByControllerClass.compute(type) { _, existing ->
+                    (existing.orEmpty() + methods).distinctBy(Method::toGenericString)
+                }
             }
     }
 
     private fun hookCurrentPositionMethods(
         methods: List<Method>,
         controllerKind: ControllerKind,
-    ): Int {
-        var count = 0
-        methods.forEach { method ->
-            runCatching {
-                env.hookAfter(method) { param ->
-                    runCatching {
-                        if (!isEnabled()) return@runCatching
-                        val controller = param.thisObject ?: return@runCatching
-                        val key = rememberPlayerController(controller, controllerKind) ?: return@runCatching
-                        if (duration <= 0) {
-                            duration = resolveDuration(controller)
-                            if (duration > 0) {
-                                SkipVideoAdState.updateDuration(key, duration)
-                            }
-                        }
-                        val position = param.result.asLong() ?: return@runCatching
-                        val now = System.currentTimeMillis()
-                        val videoKey = SkipVideoAdState.playbackIdentityKey(key)
-                        val markerDetection = pendingMarkerDetections[videoKey]
-                        if (markerDetection != null) {
-                            if (now - markerDetection.firstObservedAt < MARKER_DETECTION_SETTLE_MS) {
-                                return@runCatching
-                            }
-                            val detectionPosition = markerDetection.positionMs
-                            if (detectionPosition <= 0L) {
-                                pendingMarkerDetections.remove(videoKey)
-                                lastSeekTime = now
-                                waitTime = CHECK_INTERVAL_MS
-                                return@runCatching
-                            }
-                            pendingMarkerDetections.remove(videoKey)
-                            completedMarkerDetections.add(markerDetection.key)
-                            lastSeekTime = now
-                            waitTime = if (seekTo(
-                                    position = detectionPosition,
-                                    key = markerDetection.key,
-                                    controller = controller,
-                                    scope = SegmentDetectionScope.CONTAINING,
-                                )
-                            ) {
-                                SKIP_COOLDOWN_MS
-                            } else {
-                                CHECK_INTERVAL_MS
-                            }
-                            return@runCatching
-                        }
-                        if (now - lastSeekTime > waitTime) {
-                            lastSeekTime = now
-                            waitTime = if (seekTo(position, key, controller, SegmentDetectionScope.OPENING)) {
-                                SKIP_COOLDOWN_MS
-                            } else {
-                                CHECK_INTERVAL_MS
-                            }
-                        }
-                    }.onFailure {
-                        log("SkipVideoAd currentPosition callback failed at ${method.declaringClass.name}.${method.name}", it)
-                    }
+    ): Int = methods
+        .distinctBy(Method::toGenericString)
+        .sumOf { method -> hookCurrentPositionMethod(method, controllerKind) }
+
+    private fun hookCurrentPositionMethod(method: Method, controllerKind: ControllerKind): Int {
+        val methodKey = method.toGenericString()
+        if (!hookedCurrentPositionMethods.add(methodKey)) return 0
+        return runCatching {
+            env.hookAfter(method) { param ->
+                runCatching {
+                    handleCurrentPosition(param, controllerKind)
+                }.onFailure {
+                    log("SkipVideoAd currentPosition callback failed at ${method.declaringClass.name}.${method.name}", it)
                 }
-                count++
-            }.onFailure {
-                log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
+            }
+            1
+        }.getOrElse {
+            hookedCurrentPositionMethods.remove(methodKey)
+            log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
+            0
+        }
+    }
+
+    private fun handleCurrentPosition(
+        param: MethodHookParam,
+        controllerKind: ControllerKind,
+    ) {
+        if (!isEnabled()) return
+        val controller = param.thisObject ?: return
+        val key = rememberPlayerController(controller, controllerKind) ?: return
+        if (duration <= 0) {
+            duration = resolveDuration(controller)
+            if (duration > 0) {
+                SkipVideoAdState.updateDuration(key, duration)
             }
         }
-        return count
+        val position = param.result.asLong() ?: return
+        val now = System.currentTimeMillis()
+        val videoKey = SkipVideoAdState.playbackIdentityKey(key)
+        val markerDetection = pendingMarkerDetections[videoKey]
+        if (markerDetection != null) {
+            if (now - markerDetection.firstObservedAt < MARKER_DETECTION_SETTLE_MS) return
+            val detectionPosition = markerDetection.positionMs
+            if (detectionPosition <= 0L) {
+                pendingMarkerDetections.remove(videoKey)
+                lastSeekTime = now
+                waitTime = CHECK_INTERVAL_MS
+                return
+            }
+            pendingMarkerDetections.remove(videoKey)
+            completedMarkerDetections.add(markerDetection.key)
+            lastSeekTime = now
+            waitTime = if (seekTo(
+                    position = detectionPosition,
+                    key = markerDetection.key,
+                    controller = controller,
+                    scope = SegmentDetectionScope.CONTAINING,
+                )
+            ) {
+                SKIP_COOLDOWN_MS
+            } else {
+                CHECK_INTERVAL_MS
+            }
+            return
+        }
+        if (now - lastSeekTime > waitTime) {
+            lastSeekTime = now
+            waitTime = if (seekTo(position, key, controller, SegmentDetectionScope.OPENING)) {
+                SKIP_COOLDOWN_MS
+            } else {
+                CHECK_INTERVAL_MS
+            }
+        }
     }
 
     private fun hookPlayerStateMethods(
         methods: List<Method>,
         controllerKind: ControllerKind,
-    ): Int {
-        var count = 0
-        methods.forEach { method ->
-            runCatching {
-                env.hookAfter(method) { param ->
-                    runCatching {
-                        if (!isEnabled()) return@runCatching
-                        val controller = param.thisObject ?: return@runCatching
-                        val key = rememberPlayerController(controller, controllerKind) ?: return@runCatching
-                        val state = param.result.asInt() ?: return@runCatching
-                        if (state in 3..5 && duration <= 0) {
-                            duration = resolveDuration(controller)
-                            if (duration > 0) {
-                                SkipVideoAdState.updateDuration(key, duration)
-                            }
+    ): Int = methods
+        .distinctBy(Method::toGenericString)
+        .sumOf { method -> hookPlayerStateMethod(method, controllerKind) }
+
+    private fun hookPlayerStateMethod(method: Method, controllerKind: ControllerKind): Int {
+        val methodKey = method.toGenericString()
+        if (!hookedStateMethods.add(methodKey)) return 0
+        return runCatching {
+            env.hookAfter(method) { param ->
+                runCatching {
+                    if (!isEnabled()) return@runCatching
+                    val controller = param.thisObject ?: return@runCatching
+                    val key = rememberPlayerController(controller, controllerKind) ?: return@runCatching
+                    val state = param.result.asInt() ?: return@runCatching
+                    if (state in 3..5 && duration <= 0) {
+                        duration = resolveDuration(controller)
+                        if (duration > 0) {
+                            SkipVideoAdState.updateDuration(key, duration)
                         }
-                    }.onFailure {
-                        log("SkipVideoAd playerState callback failed at ${method.declaringClass.name}.${method.name}", it)
                     }
+                }.onFailure {
+                    log("SkipVideoAd playerState callback failed at ${method.declaringClass.name}.${method.name}", it)
                 }
-                count++
-            }.onFailure {
-                log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
             }
+            1
+        }.getOrElse {
+            hookedStateMethods.remove(methodKey)
+            log("SkipVideoAd failed to hook ${method.declaringClass.name}.${method.name}", it)
+            0
         }
-        return count
+    }
+
+    internal fun registerRuntimePlayerController(controller: Any?) {
+        if (controller == null || !isEnabled()) return
+        synchronized(runtimeControllerLock) {
+            val type = controller.javaClass
+            if (!registeredRuntimeControllerClasses.add(type)) return
+            val methods = try {
+                type.allMethods().toList()
+            } catch (throwable: Throwable) {
+                registeredRuntimeControllerClasses.remove(type)
+                log("SkipVideoAd failed to inspect runtime player ${type.name}", throwable)
+                return
+            }
+            val currentPosition = methods.filter { it.isRuntimeCurrentPositionMethod() }
+            val state = methods.filter { it.isRuntimeStateMethod() }
+            val seek = methods.filter { it.isRuntimeSeekMethod() }
+            cacheSeekMethods(seek)
+            val currentHooks = hookCurrentPositionMethods(currentPosition, ControllerKind.PLAYER_CORE)
+            val stateHooks = hookPlayerStateMethods(state, ControllerKind.PLAYER_CORE)
+            log(
+                "SkipVideoAd runtime player ${type.name}: " +
+                    "current=${currentPosition.size},state=${state.size},seek=${seek.size}," +
+                    "hooked=${currentHooks + stateHooks}",
+            )
+        }
     }
 
     private fun resolveDuration(controller: Any): Long {
@@ -861,6 +913,39 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private fun isEnabled(): Boolean =
         ModuleSettings.isSkipVideoAdEnabledCached(prefs)
 
+    private fun Method.isRuntimeCurrentPositionMethod(): Boolean =
+        isRuntimeConcreteMethod() &&
+            name == "getCurrentPosition" &&
+            parameterCount == 0 &&
+            returnType.isRuntimeNumericType()
+
+    private fun Method.isRuntimeStateMethod(): Boolean =
+        isRuntimeConcreteMethod() &&
+            name in RUNTIME_STATE_METHOD_NAMES &&
+            parameterCount == 0 &&
+            returnType.isRuntimeNumericType()
+
+    private fun Method.isRuntimeSeekMethod(): Boolean =
+        isRuntimeConcreteMethod() &&
+            name == "seekTo" &&
+            parameterCount in 1..2 &&
+            parameterTypes[0].isRuntimeNumericType() &&
+            (parameterCount == 1 || parameterTypes[1].isRuntimeBooleanType())
+
+    private fun Method.isRuntimeConcreteMethod(): Boolean =
+        !Modifier.isStatic(modifiers) &&
+            !Modifier.isAbstract(modifiers) &&
+            !declaringClass.isInterface
+
+    private fun Class<*>.isRuntimeNumericType(): Boolean =
+        this == Int::class.javaPrimitiveType ||
+            this == Int::class.javaObjectType ||
+            this == Long::class.javaPrimitiveType ||
+            this == Long::class.javaObjectType
+
+    private fun Class<*>.isRuntimeBooleanType(): Boolean =
+        this == Boolean::class.javaPrimitiveType || this == Boolean::class.javaObjectType
+
     private fun Any?.asInt(): Int? = when (this) {
         is Number -> toInt()
         is String -> toIntOrNull()
@@ -909,7 +994,7 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun formatSeconds(value: Float): String = String.format(Locale.US, "%.1fs", value)
 
-    private companion object {
+    companion object {
         private const val CHECK_INTERVAL_MS = 1000L
         private const val SEGMENT_OPENING_WINDOW_MS = 3000L
         private const val MARKER_DETECTION_SETTLE_MS = 800L
@@ -925,8 +1010,16 @@ class SkipVideoAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         private val MANUAL_PROMPT_BACKGROUND = Color.argb(230, 18, 18, 18)
         private val MANUAL_PROMPT_ACTION_BACKGROUND = Color.rgb(251, 114, 153)
         private val MANUAL_PROMPT_SECONDARY_TEXT = Color.argb(190, 255, 255, 255)
+        private val RUNTIME_STATE_METHOD_NAMES = setOf("getState", "getPlayerState")
 
         private val callbacksRegistered = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        @Volatile
+        private var activeInstance: SkipVideoAdHook? = null
+
+        internal fun registerRuntimePlayerController(controller: Any?) {
+            activeInstance?.registerRuntimePlayerController(controller)
+        }
 
         @Volatile
         private var topActivity: WeakReference<Activity>? = null

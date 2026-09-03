@@ -57,8 +57,10 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
         if (!isCandidateComponent(className)) return
 
         saveKnownComponent(className)
-        attachPersistentHider(root, className)
-        applyVisibility(root, className)
+        if (shouldHide(className)) {
+            attachPersistentHider(root, className)
+            applyVisibility(root, className)
+        }
     }
 
     private fun hookHomeComponentCatalog(symbols: RestoredHomeComponentHideSymbols): Int {
@@ -159,7 +161,9 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
     private fun attachPersistentHider(root: View, className: String) {
         if (attachedLayoutListeners.containsKey(root)) return
         val listener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            applyVisibility(root, className)
+            if (shouldHide(className)) {
+                applyVisibility(root, className)
+            }
         }
         runCatching {
             root.viewTreeObserver?.addOnGlobalLayoutListener(listener)
@@ -170,7 +174,11 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
     }
 
     private fun applyVisibility(root: View, className: String) {
-        root.visibility = if (shouldHide(className)) View.GONE else View.VISIBLE
+        if (shouldHide(className)) {
+            if (root.visibility != View.GONE) {
+                root.visibility = View.GONE
+            }
+        }
     }
 
     private fun String.sanitizePart(): String =
@@ -209,11 +217,18 @@ class HomeComponentHideHook(env: io.github.bbzq.feats.RoamingEnv) : BaseRoamingH
         private val EXCLUDED_KEYWORDS = listOf(
             "search",
             "dynamic",
+            "following",
             "history",
             "favorite",
             "space",
             "reply",
             "detail",
+            "mainfragment",
+            "basemainframefragment",
+            "mainactivity",
+            "mine",
+            "mall",
+            "channel",
         )
     }
 }

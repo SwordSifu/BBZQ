@@ -20,12 +20,24 @@ class BilibiliSponsorBlock(
             return FetchResult(FetchStatus.FAILED, emptyList())
         }
 
-        val hashPrefix = trimmedBvid.sha256().take(HASH_PREFIX_LENGTH)
-        val result = BASE_URLS.asSequence()
-            .map { baseUrl -> fetchSegments(buildRequest(baseUrl, hashPrefix), trimmedBvid) }
-            .firstOrNull { it.status != FetchStatus.FAILED && it.status != FetchStatus.NOT_FOUND }
-            ?: fetchSegments(buildRequest(BASE_URLS.last(), hashPrefix), trimmedBvid)
+        val hash = trimmedBvid.sha256()
+        require(hash.length >= HASH_PREFIX_LENGTH) { "SHA-256 hash length must be at least $HASH_PREFIX_LENGTH" }
+        val hashPrefix = hash.take(HASH_PREFIX_LENGTH)
+
+        val result = getSegmentsWithFallback(hashPrefix, trimmedBvid)
         return result.filterByCategories(enabledCategories).filterByCid(cid)
+    }
+
+    private fun getSegmentsWithFallback(hashPrefix: String, targetBvid: String): FetchResult {
+        var lastResult: FetchResult? = null
+        for (baseUrl in BASE_URLS) {
+            val result = fetchSegments(buildRequest(baseUrl, hashPrefix), targetBvid)
+            lastResult = result
+            if (result.status != FetchStatus.FAILED && result.status != FetchStatus.NOT_FOUND) {
+                return result
+            }
+        }
+        return lastResult ?: FetchResult(FetchStatus.FAILED, emptyList())
     }
 
     private fun buildRequest(baseUrl: String, hashPrefix: String): Request =
@@ -87,7 +99,8 @@ class BilibiliSponsorBlock(
                 }
             }
 
-            FetchResult(FetchStatus.NOT_FOUND, emptyList(), statusCode)
+            // 伺服器有該 Hash Prefix 的資料，但列表中未包含此目標 BVID
+            FetchResult(FetchStatus.VIDEO_NOT_IN_DB, emptyList(), statusCode)
         } catch (_: JSONException) {
             FetchResult(FetchStatus.FAILED, emptyList(), statusCode)
         }
@@ -165,7 +178,36 @@ class BilibiliSponsorBlock(
         val videoDuration: Int,
         val locked: Int,
         val votes: Int,
-    )
+    ) {
+        val start: Float get() = segment.getOrElse(0) { 0f }
+        val end: Float get() = segment.getOrElse(1) { 0f }
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+            other as Segment
+            return segment.contentEquals(other.segment) &&
+                cid == other.cid &&
+                uuid == other.uuid &&
+                category == other.category &&
+                actionType == other.actionType &&
+                videoDuration == other.videoDuration &&
+                locked == other.locked &&
+                votes == other.votes
+        }
+
+        override fun hashCode(): Int {
+            var result = segment.contentHashCode()
+            result = 31 * result + cid.hashCode()
+            result = 31 * result + uuid.hashCode()
+            result = 31 * result + category.hashCode()
+            result = 31 * result + actionType.hashCode()
+            result = 31 * result + videoDuration
+            result = 31 * result + locked
+            result = 31 * result + votes
+            return result
+        }
+    }
 
     data class FetchResult(
         val status: FetchStatus,
@@ -178,26 +220,30 @@ class BilibiliSponsorBlock(
         EMPTY,
         FILTERED_BY_CATEGORY,
         FILTERED_BY_CID,
-        NOT_FOUND,
-        FAILED,
+        NOT_FOUND,          // HTTP 404：伺服器無此 Hash 前綴紀錄
+        VIDEO_NOT_IN_DB,    // HTTP 200：Hash 前綴命中，但 payload 中無該特定 BVID
+        FAILED,             // 網路連線失敗或非預期 HTTP 錯誤碼
     }
 
     private companion object {
         private const val ACTION_SKIP = "skip"
         private const val HASH_PREFIX_LENGTH = 4
         private const val REQUEST_ORIGIN = "BBZQ"
-        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android; Xposed; NkBe) BBZQ/1.0"
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android; Xposed; NkBe) BBZQ/1.2.1"
 
         private val BASE_URLS = listOf(
             "https://bsbsb.top/api/skipSegments/",
             "https://www.bsbsb.xyz/api/skipSegments/",
             "http://154.222.28.109/api/skipSegments/",
+            "https://bbzq.nkbe.top:9876/api/skipSegments/",
+            "http://103.236.70.57:9876/api/skipSegments/",
         )
 
         private val httpClient by lazy {
             OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(false)
                 .build()
         }
     }

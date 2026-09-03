@@ -16,7 +16,7 @@ class VideoDetailRelateFilterHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private var titleKeywordsRaw = ""
     private var titleKeywordsCache = emptyList<String>()
     private val knownTypes = mutableSetOf<String>()
-    private val methodCache = mutableMapOf<Class<*>, MutableMap<String, Method?>>()
+    private val methodCache = java.util.concurrent.ConcurrentHashMap<Class<*>, java.util.concurrent.ConcurrentHashMap<String, Method?>>()
 
     override fun startHook() {
         if (env.processName != env.packageName) return
@@ -178,8 +178,7 @@ class VideoDetailRelateFilterHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }
 
         // 2. Sub-card in RelateCard: getAv(), getGame(), getCm(), getResource(), getLive(), getSpecial(), etc.
-        val subGetters = arrayOf("getAv", "getGame", "getCm", "getResource", "getLive", "getSpecial", "getBangumi", "getBangumiSeason", "getCourse")
-        for (getter in subGetters) {
+        for (getter in SUB_GETTERS) {
             val sub = callNoArg(item, getter) ?: continue
             callNoArg(sub, "getTitle")?.toString()?.takeIf { it.isNotBlank() }?.let {
                 return it
@@ -234,22 +233,16 @@ class VideoDetailRelateFilterHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private fun debugNoArgMethod(type: Class<*>, name: String): Method? =
-        synchronized(methodCache) {
-            val methods = methodCache.getOrPut(type) { mutableMapOf() }
-            if (methods.containsKey(name)) {
-                methods[name]
-            } else {
-                val method = type.methods
+        methodCache.computeIfAbsent(type) { java.util.concurrent.ConcurrentHashMap() }
+            .computeIfAbsent(name) { methodName ->
+                type.methods
                     .firstOrNull {
-                        it.name == name &&
+                        it.name == methodName &&
                             it.parameterCount == 0 &&
                             !Modifier.isStatic(it.modifiers)
                     }
                     ?.apply { isAccessible = true }
-                methods[name] = method
-                method
             }
-        }
 
     private fun writeBackFilteredItems(target: Any?, field: Field?, items: List<Any?>) {
         if (target == null || field == null) return
@@ -258,5 +251,25 @@ class VideoDetailRelateFilterHook(env: RoamingEnv) : BaseRoamingHook(env) {
         }.onFailure { throwable ->
             log("VideoDetailRelateFilter could not update response items field", throwable)
         }
+    }
+
+    private companion object {
+        private val SUB_GETTERS = arrayOf(
+            "getBasicInfo",
+            "getAv",
+            "getGame",
+            "getCm",
+            "getResource",
+            "getLive",
+            "getSpecial",
+            "getBangumi",
+            "getBangumiSeason",
+            "getBangumiAv",
+            "getBangumiUgc",
+            "getHistoryAv",
+            "getCourse",
+            "getMiniProgram",
+            "getAiCard",
+        )
     }
 }

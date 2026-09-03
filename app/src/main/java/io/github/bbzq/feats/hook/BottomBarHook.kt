@@ -4,7 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
-import android.widget.LinearLayout
 import io.github.bbzq.ModuleSettings
 import io.github.bbzq.feats.BaseRoamingHook
 import io.github.bbzq.feats.RoamingEnv
@@ -12,10 +11,14 @@ import io.github.bbzq.feats.allFields
 import io.github.bbzq.feats.hookAfter
 import io.github.bbzq.feats.hookBefore
 import org.json.JSONObject
+import java.util.Collections
+import java.util.WeakHashMap
 
 class BottomBarHook(env: RoamingEnv) : BaseRoamingHook(env) {
     private var cachedBottomEntriesLoaded = false
     private var cacheReaderFailureLogged = false
+    private val attachedContainerListeners =
+        Collections.synchronizedMap(WeakHashMap<ViewGroup, View.OnLayoutChangeListener>())
 
     override fun startHook() {
         ModuleSettings.refreshKnownBottomBarItemsCache(prefs)
@@ -105,29 +108,82 @@ class BottomBarHook(env: RoamingEnv) : BaseRoamingHook(env) {
 
     private fun hideTabs(host: Any?, tabs: List<*>) {
         val container = host?.findTabContainer(tabs.size) ?: return
-        val hiddenIds = if (ModuleSettings.isCustomBottomBarEnabled(prefs)) {
-            ModuleSettings.getHiddenBottomBarItems(prefs)
-        } else {
-            emptySet()
+        val enabled = ModuleSettings.isCustomBottomBarEnabled(prefs)
+        val hiddenKeys = if (enabled) ModuleSettings.getHiddenBottomBarItems(prefs) else emptySet()
+        val knownItems = ModuleSettings.getKnownBottomBarItems(prefs).mapNotNull(::decodeBottomItem)
+
+        fun applyTabVisibilities() {
+            tabs.forEachIndexed { index, item ->
+                val entry = item?.extractBottomEntry() ?: return@forEachIndexed
+                val child = container.getChildAt(index) ?: return@forEachIndexed
+                val hidden = enabled && isEntryHidden(entry, hiddenKeys, knownItems)
+                val targetVisibility = if (hidden) View.GONE else View.VISIBLE
+                if (child.visibility != targetVisibility) {
+                    child.visibility = targetVisibility
+                }
+                child.isClickable = !hidden
+                child.isEnabled = !hidden
+                child.alpha = if (hidden) 0f else 1f
+            }
         }
 
-        tabs.forEachIndexed { index, item ->
-            val entry = item?.extractBottomEntry() ?: return@forEachIndexed
-            val child = container.getChildAt(index) ?: return@forEachIndexed
-            val hidden = entry.id in hiddenIds
-            child.visibility = if (hidden) View.GONE else View.VISIBLE
-            child.isClickable = !hidden
-            child.isEnabled = !hidden
-            child.alpha = if (hidden) 0f else 1f
-        }
+        applyTabVisibilities()
+        attachContainerLayoutListener(container, ::applyTabVisibilities)
     }
 
-    private fun Any.findTabContainer(tabCount: Int): ViewGroup? =
-        javaClass.allFields()
+    private fun attachContainerLayoutListener(container: ViewGroup, onLayout: () -> Unit) {
+        if (attachedContainerListeners.containsKey(container)) return
+        val listener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            onLayout()
+        }
+        container.addOnLayoutChangeListener(listener)
+        attachedContainerListeners[container] = listener
+    }
+
+    private fun isEntryHidden(
+        entry: BottomBarEntry,
+        hiddenKeys: Set<String>,
+        knownItems: Collection<KnownBottomBarItem>,
+    ): Boolean {
+        if (hiddenKeys.isEmpty()) return false
+        if (entry.id in hiddenKeys || entry.name in hiddenKeys || (entry.uri.isNotBlank() && entry.uri in hiddenKeys)) {
+            return true
+        }
+        for (known in knownItems) {
+            val matchesEntry = (entry.id.isNotBlank() && entry.id.equals(known.id, ignoreCase = true)) ||
+                (entry.name.isNotBlank() && entry.name.equals(known.name, ignoreCase = true)) ||
+                (entry.uri.isNotBlank() && entry.uri.equals(known.uri, ignoreCase = true))
+            if (matchesEntry) {
+                if (known.id in hiddenKeys || known.name in hiddenKeys || (known.uri.isNotBlank() && known.uri in hiddenKeys)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun Any.findTabContainer(tabCount: Int): ViewGroup? {
+        if (this is ViewGroup && childCount >= tabCount) {
+            return this
+        }
+        val directChild = (this as? ViewGroup)?.let { findDirectChildContainer(it, tabCount) }
+        if (directChild != null) return directChild
+        return javaClass.allFields()
             .mapNotNull { field ->
-                runCatching { field.get(this) as? LinearLayout }.getOrNull()
+                runCatching { field.get(this) as? ViewGroup }.getOrNull()
             }
             .firstOrNull { container -> container.childCount >= tabCount }
+    }
+
+    private fun findDirectChildContainer(parent: ViewGroup, tabCount: Int): ViewGroup? {
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChildAt(i)
+            if (child is ViewGroup && child.childCount >= tabCount) {
+                return child
+            }
+        }
+        return null
+    }
 
     private fun saveCachedBottomEntries() {
         if (cachedBottomEntriesLoaded) return
@@ -158,7 +214,8 @@ class BottomBarHook(env: RoamingEnv) : BaseRoamingHook(env) {
     }
 
     private fun Any.extractBottomEntry(): BottomBarEntry? {
-        val strings = javaClass.allFields()
+        val fields = javaClass.allFields().toList()
+        val strings = fields
             .mapNotNull { field ->
                 runCatching { field.get(this) as? String }.getOrNull()?.trim()
             }
@@ -171,9 +228,15 @@ class BottomBarHook(env: RoamingEnv) : BaseRoamingHook(env) {
             ?: strings.firstOrNull { it != guessedUri && it != guessedName && looksLikeBottomBarId(it) }
             ?: strings.firstOrNull { it != guessedUri && it != guessedName }
 
-        if (guessedId == null && guessedName == null && guessedUri == null) return null
-        val resolvedId = guessedId ?: guessedName ?: guessedUri ?: return null
-        val resolvedName = guessedName ?: return null
+        val intId = fields.firstNotNullOfOrNull { field ->
+            if (field.name.equals("id", ignoreCase = true) || field.name.equals("mId", ignoreCase = true)) {
+                runCatching { field.get(this) }.getOrNull()?.toString()?.takeIf { it.isNotBlank() && it != "0" && it != "-1" }
+            } else null
+        }
+
+        if (guessedId == null && guessedName == null && guessedUri == null && intId == null) return null
+        val resolvedId = guessedId ?: intId ?: guessedName ?: guessedUri ?: return null
+        val resolvedName = guessedName ?: guessedId ?: intId ?: return null
         return BottomBarEntry(resolvedId, resolvedName, guessedUri.orEmpty())
     }
 

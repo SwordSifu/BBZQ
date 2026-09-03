@@ -20,7 +20,9 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
             .mapNotNull { (key, value) -> value?.let { key to it } }
             .toMap()
         synchronized(cacheLock) {
-            localCache = loaded
+            if (loaded.isNotEmpty() || localCache.isEmpty()) {
+                localCache = if (localCache.isEmpty()) loaded else (localCache + loaded)
+            }
             lastLoadTime = now
         }
     }
@@ -116,8 +118,8 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
     private fun applyRemoteOperations(operations: List<PreferenceOperation>): Boolean {
         if (operations.isEmpty()) return true
         val remotePrefs = resolveRemotePreferences() ?: run {
-            lastStatus = "remote write unavailable"
-            return false
+            lastStatus = "remote unavailable"
+            return true
         }
         return runCatching {
             val editor = remotePrefs.edit()
@@ -134,9 +136,16 @@ class ModuleSettingsBridge private constructor() : SharedPreferences {
                 lastStatus = if (committed) "remote ok" else "remote commit failed"
                 committed
             },
-            onFailure = {
-                lastStatus = "remote write ${it.javaClass.simpleName}: ${it.message}"
-                false
+            onFailure = { throwable ->
+                if (throwable is UnsupportedOperationException) {
+                    // Read-only remote preferences (e.g. injected host process under NPatch / LibXposed).
+                    // In-memory update still succeeds.
+                    lastStatus = "remote ok (read-only snapshot)"
+                    true
+                } else {
+                    lastStatus = "remote write ${throwable.javaClass.simpleName}: ${throwable.message}"
+                    false
+                }
             },
         )
     }

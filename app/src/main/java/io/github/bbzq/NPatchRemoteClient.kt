@@ -35,6 +35,7 @@ object NPatchRemoteClient {
         val authority = customAuthority ?: DEFAULT_NPATCH_AUTHORITY
         val targetPackage = context.packageName
         val extras = Bundle().apply {
+            putString("modulePackageName", targetPackage)
             putString("module_package", targetPackage)
             putInt("calling_uid", android.os.Process.myUid())
         }
@@ -78,17 +79,25 @@ object NPatchRemoteClient {
         extras: Bundle,
     ): IBinder? {
         val uri = Uri.parse("content://$authority")
-        val methods = listOf("connect", "getXposedService", "SendBinder", "getBinder")
+        val methods = listOf(
+            "getRemoteService",
+            "getInjectedRemoteService",
+            "connect",
+            "getXposedService",
+            "SendBinder",
+            "getBinder",
+        )
 
         for (method in methods) {
             try {
-                val bundle = context.contentResolver.call(uri, method, targetPackage, extras)
+                val bundle = context.contentResolver.call(uri, method, null, extras)
+                    ?: context.contentResolver.call(uri, method, targetPackage, extras)
                     ?: continue
                 val binder = bundle.getBinder("binder")
                     ?: bundle.getBinder("service")
                     ?: bundle.getBinder("xposed_service")
                     ?: bundle.getBinder("extra_binder")
-                if (binder != null) {
+                if (binder != null && binder.isBinderAlive) {
                     return binder
                 }
             } catch (e: SecurityException) {

@@ -302,21 +302,21 @@ object ConfigPorter {
             ModuleSettings.ExportableValueType.BOOLEAN -> {
                 serializer.startTag(null, TAG_BOOLEAN)
                 serializer.attribute(null, ATTR_NAME, key)
-                serializer.attribute(null, ATTR_VALUE, (value as Boolean).toString())
+                serializer.attribute(null, ATTR_VALUE, (value as? Boolean ?: false).toString())
                 serializer.endTag(null, TAG_BOOLEAN)
             }
 
             ModuleSettings.ExportableValueType.INT -> {
                 serializer.startTag(null, TAG_INT)
                 serializer.attribute(null, ATTR_NAME, key)
-                serializer.attribute(null, ATTR_VALUE, (value as Int).toString())
+                serializer.attribute(null, ATTR_VALUE, (value as? Int ?: 0).toString())
                 serializer.endTag(null, TAG_INT)
             }
 
             ModuleSettings.ExportableValueType.STRING -> {
                 serializer.startTag(null, TAG_STRING)
                 serializer.attribute(null, ATTR_NAME, key)
-                serializer.text(value as String)
+                serializer.text((value as? String).orEmpty())
                 serializer.endTag(null, TAG_STRING)
             }
 

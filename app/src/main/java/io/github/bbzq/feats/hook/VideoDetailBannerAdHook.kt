@@ -18,8 +18,13 @@ import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import java.util.IdentityHashMap
 
+import io.github.bbzq.feats.allMethods
+import java.lang.reflect.Modifier
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+
 class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
-    private val videoDetailProxies = IdentityHashMap<Any, Any>()
+    private val hookedDriverClasses = Collections.newSetFromMap(ConcurrentHashMap<Class<*>, Boolean>())
     private val underPlayerProxies = IdentityHashMap<Any, Any>()
     private val relateProxies = IdentityHashMap<Any, Any>()
     private val merchandiseProxies = IdentityHashMap<Any, Any>()
@@ -66,18 +71,10 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
             runCatching {
                 val original = param.result ?: return@runCatching
                 if (!videoDetailType.isInstance(original)) return@runCatching
-                param.result = videoDetailProxy(
-                    original = original,
-                    videoDetailType = videoDetailType,
-                    underPlayerType = symbols.underPlayerType,
-                    relateType = symbols.relateType,
-                    merchandiseType = symbols.merchandiseType,
-                    pausedPageType = symbols.pausedPageType,
-                    adPanelType = symbols.adPanelType,
-                    requestPausedPage = symbols.requestPausedPage,
-                    getPausedPagePanel = symbols.getPausedPagePanel,
-                    getBrandPausedPagePanel = symbols.getBrandPausedPagePanel,
-                )
+                val concreteClass = original.javaClass
+                if (hookedDriverClasses.add(concreteClass)) {
+                    hookVideoDetailClassMethods(concreteClass, symbols)
+                }
             }.onFailure {
                 log("VideoDetailBannerAd hook failed at ${getVideoDetail.declaringClass.name}.${getVideoDetail.name}", it)
             }
@@ -124,81 +121,64 @@ class VideoDetailBannerAdHook(env: RoamingEnv) : BaseRoamingHook(env) {
         return 2
     }
 
-    private fun videoDetailProxy(
-        original: Any,
-        videoDetailType: Class<*>,
-        underPlayerType: Class<*>?,
-        relateType: Class<*>?,
-        merchandiseType: Class<*>?,
-        pausedPageType: Class<*>?,
-        adPanelType: Class<*>?,
-        requestPausedPage: Method?,
-        getPausedPagePanel: Method?,
-        getBrandPausedPagePanel: Method?,
-    ): Any = synchronized(videoDetailProxies) {
-        videoDetailProxies.getOrPut(original) {
-            Proxy.newProxyInstance(
-                original.javaClass.classLoader ?: classLoader,
-                collectProxyInterfaces(original, videoDetailType),
-                InvocationHandler { proxy, method, args ->
-                    runCatching {
-                        when {
-                            method.isObjectMethod("toString", 0) ->
-                                "BBZQVideoDetailProxy(${original.javaClass.name})"
-                            method.isObjectMethod("hashCode", 0) ->
-                                System.identityHashCode(proxy)
-                            method.isObjectMethod("equals", 1) ->
-                                proxy === args?.firstOrNull()
-                            method.name == "getUnderPlayer" && method.parameterCount == 0 && underPlayerType != null -> {
-                                val underPlayer = invokeOriginal(original, method, args) ?: return@runCatching null
-                                underPlayerProxy(underPlayer, underPlayerType)
-                            }
-                            method.name == "getRelate" && method.parameterCount == 0 && relateType != null -> {
-                                val relate = invokeOriginal(original, method, args) ?: return@runCatching null
-                                if (relateType.isInstance(relate)) relateProxy(relate, relateType) else relate
-                            }
-                            method.name == "getMerchandise" &&
-                                method.parameterCount == 0 &&
-                                merchandiseType != null -> {
-                                val merchandise = invokeOriginal(original, method, args) ?: return@runCatching null
-                                if (merchandiseType.isInstance(merchandise)) {
-                                    merchandiseProxy(merchandise, merchandiseType)
-                                } else {
-                                    merchandise
-                                }
-                            }
-                            method.name == "getPausedPage" &&
-                                method.parameterCount == 0 &&
-                                pausedPageType != null &&
-                                requestPausedPage != null -> {
-                                val pausedPage = invokeOriginal(original, method, args) ?: return@runCatching null
-                                if (pausedPageType.isInstance(pausedPage)) {
-                                    pausedPageProxy(pausedPage, pausedPageType, requestPausedPage)
-                                } else {
-                                    pausedPage
-                                }
-                            }
-                            method.name == "getPanel" &&
-                                method.parameterCount == 0 &&
-                                adPanelType != null &&
-                                (getPausedPagePanel != null || getBrandPausedPagePanel != null) -> {
-                                val panel = invokeOriginal(original, method, args) ?: return@runCatching null
-                                if (adPanelType.isInstance(panel)) {
-                                    adPanelProxy(panel, adPanelType, getPausedPagePanel, getBrandPausedPagePanel)
-                                } else {
-                                    panel
-                                }
-                            }
-                            else ->
-                                invokeOriginal(original, method, args)
+    private fun hookVideoDetailClassMethods(
+        targetClass: Class<*>,
+        symbols: RestoredVideoDetailBannerAdSymbols,
+    ) {
+        val underPlayerType = symbols.underPlayerType
+        val relateType = symbols.relateType
+        val merchandiseType = symbols.merchandiseType
+        val pausedPageType = symbols.pausedPageType
+        val adPanelType = symbols.adPanelType
+        val requestPausedPage = symbols.requestPausedPage
+        val getPausedPagePanel = symbols.getPausedPagePanel
+        val getBrandPausedPagePanel = symbols.getBrandPausedPagePanel
+
+        targetClass.allMethods().filter { !Modifier.isStatic(it.modifiers) && it.parameterCount == 0 }.forEach { method ->
+            when (method.name) {
+                "getUnderPlayer" -> if (underPlayerType != null) {
+                    env.hookAfter(method) { param ->
+                        val underPlayer = param.result ?: return@hookAfter
+                        if (underPlayerType.isInstance(underPlayer)) {
+                            param.result = underPlayerProxy(underPlayer, underPlayerType)
                         }
-                    }.getOrElse {
-                        log("VideoDetailBannerAd videoDetail proxy failed at ${method.declaringClass.name}.${method.name}", it)
-                        invokeOriginal(original, method, args)
                     }
-                },
-            )
+                }
+                "getRelate" -> if (relateType != null) {
+                    env.hookAfter(method) { param ->
+                        val relate = param.result ?: return@hookAfter
+                        if (relateType.isInstance(relate)) {
+                            param.result = relateProxy(relate, relateType)
+                        }
+                    }
+                }
+                "getMerchandise" -> if (merchandiseType != null) {
+                    env.hookAfter(method) { param ->
+                        val merchandise = param.result ?: return@hookAfter
+                        if (merchandiseType.isInstance(merchandise)) {
+                            param.result = merchandiseProxy(merchandise, merchandiseType)
+                        }
+                    }
+                }
+                "getPausedPage" -> if (pausedPageType != null && requestPausedPage != null) {
+                    env.hookAfter(method) { param ->
+                        val pausedPage = param.result ?: return@hookAfter
+                        if (pausedPageType.isInstance(pausedPage)) {
+                            param.result = pausedPageProxy(pausedPage, pausedPageType, requestPausedPage)
+                        }
+                    }
+                }
+                "getPanel" -> if (adPanelType != null && (getPausedPagePanel != null || getBrandPausedPagePanel != null)) {
+                    env.hookAfter(method) { param ->
+                        val panel = param.result ?: return@hookAfter
+                        if (adPanelType.isInstance(panel)) {
+                            param.result = adPanelProxy(panel, adPanelType, getPausedPagePanel, getBrandPausedPagePanel)
+                        }
+                    }
+                }
+            }
         }
+        log("VideoDetailBannerAd successfully hooked methods on ${targetClass.name}")
     }
 
     private fun underPlayerProxy(original: Any, underPlayerType: Class<*>): Any =
