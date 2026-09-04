@@ -69,10 +69,8 @@ val releaseSigningKeys = listOf(
     "releaseKeyPassword",
 )
 val releaseSigningValues = releaseSigningKeys.associateWith(::signingValue)
-val unsignedReleaseRequested = providers.gradleProperty("bbzqUnsignedRelease")
-    .map(String::toBoolean)
-    .orElse(false)
-    .get()
+val unsignedReleaseRequested =
+    providers.gradleProperty("bbzqUnsignedRelease").orNull?.toBoolean() == true
 val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName.substringAfterLast(':').contains("Release", ignoreCase = true)
 }
