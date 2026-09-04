@@ -69,10 +69,12 @@ val releaseSigningKeys = listOf(
     "releaseKeyPassword",
 )
 val releaseSigningValues = releaseSigningKeys.associateWith(::signingValue)
+val unsignedReleaseRequested =
+    providers.gradleProperty("bbzqUnsignedRelease").orNull?.toBoolean() == true
 val releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
     taskName.substringAfterLast(':').contains("Release", ignoreCase = true)
 }
-if (releaseBuildRequested) {
+if (releaseBuildRequested && !unsignedReleaseRequested) {
     val missingSigningKeys = releaseSigningValues.filterValues { it.isNullOrBlank() }.keys
     require(missingSigningKeys.isEmpty()) {
         "Release signing configuration is incomplete. Missing: ${missingSigningKeys.joinToString()}"
@@ -82,15 +84,17 @@ if (releaseBuildRequested) {
         "Release signing keystore does not exist: $storeFile"
     }
 }
-releaseSigningValues.forEach { (name, value) ->
-    value?.let { extensions.extraProperties.set(name, it) }
-}
+if (!unsignedReleaseRequested) {
+    releaseSigningValues.forEach { (name, value) ->
+        value?.let { extensions.extraProperties.set(name, it) }
+    }
 
-apksign {
-    storeFileProperty = "releaseStoreFile"
-    storePasswordProperty = "releaseStorePassword"
-    keyAliasProperty = "releaseKeyAlias"
-    keyPasswordProperty = "releaseKeyPassword"
+    apksign {
+        storeFileProperty = "releaseStoreFile"
+        storePasswordProperty = "releaseStorePassword"
+        keyAliasProperty = "releaseKeyAlias"
+        keyPasswordProperty = "releaseKeyPassword"
+    }
 }
 
 apktransform {
