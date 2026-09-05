@@ -1,8 +1,8 @@
 name: CI
 
 concurrency:
-  group: bbzq-master-release
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('bbzq-pr-{0}', github.event.pull_request.number) || 'bbzq-master-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   workflow_dispatch:
@@ -13,6 +13,11 @@ on:
         default: false
         type: boolean
   push:
+    branches:
+      - master
+    paths-ignore:
+      - '**.md'
+  pull_request:
     branches:
       - master
     paths-ignore:
@@ -132,6 +137,7 @@ jobs:
             "build-tools;36.1.0"
 
       - name: Restore linker guard source
+        if: ${{ github.event_name != 'pull_request' }}
         shell: bash
         env:
           LINKER_GUARD_SOURCE_B64: ${{ secrets.LINKER_GUARD_SOURCE_B64 }}
@@ -304,6 +310,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Restore linker guard source
+        if: ${{ github.event_name != 'pull_request' }}
         shell: bash
         env:
           LINKER_GUARD_SOURCE_B64: ${{ secrets.LINKER_GUARD_SOURCE_B64 }}

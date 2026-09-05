@@ -6,6 +6,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
 import java.io.File
+import java.io.IOException
 import java.nio.ByteBuffer
 
 object MediaMuxerUtil {
@@ -23,14 +24,23 @@ object MediaMuxerUtil {
     fun mux(videoPath: String, audioPath: String, outPath: String): Boolean {
         val videoFile = File(videoPath)
         val audioFile = File(audioPath)
-        if (!videoFile.exists() || !audioFile.exists()) {
-            Log.e(TAG, "mux: Input files missing. video=${videoFile.exists()}, audio=${audioFile.exists()}")
+        if (!videoFile.isFile || videoFile.length() <= 0L ||
+            !audioFile.isFile || audioFile.length() <= 0L
+        ) {
+            Log.e(
+                TAG,
+                "mux: Input files missing or empty. " +
+                    "video=${videoFile.isFile} (${videoFile.length()} bytes), " +
+                    "audio=${audioFile.isFile} (${audioFile.length()} bytes)",
+            )
             return false
         }
 
         var videoExtractor: MediaExtractor? = null
         var audioExtractor: MediaExtractor? = null
         var muxer: MediaMuxer? = null
+        var muxerStarted = false
+        var temporaryOutput: File? = null
 
         try {
             videoExtractor = MediaExtractor().apply { setDataSource(videoPath) }
@@ -66,14 +76,17 @@ object MediaMuxerUtil {
             val audioFormat = audioExtractor.getTrackFormat(audioTrackIndex)
 
             val outFile = File(outPath)
-            if (outFile.exists()) outFile.delete()
-            outFile.parentFile?.mkdirs()
+            temporaryOutput = DownloadFileOutput.createTemporary(outFile)
+            if (!temporaryOutput!!.delete()) {
+                throw IOException("Unable to prepare temporary mux output: ${temporaryOutput!!.absolutePath}")
+            }
 
-            muxer = MediaMuxer(outPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = MediaMuxer(temporaryOutput!!.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             val outVideoTrackIndex = muxer.addTrack(videoFormat)
             val outAudioTrackIndex = muxer.addTrack(audioFormat)
 
             muxer.start()
+            muxerStarted = true
 
             val maxBufferSize = 2 * 1024 * 1024 // 2MB buffer
             val videoBuffer = ByteBuffer.allocateDirect(maxBufferSize)
@@ -86,6 +99,8 @@ object MediaMuxerUtil {
 
             var lastVideoPts = -1L
             var lastAudioPts = -1L
+            var videoSamplesWritten = 0
+            var audioSamplesWritten = 0
 
             while (!videoEos || !audioEos) {
                 val videoPts = if (!videoEos) videoExtractor.sampleTime else Long.MAX_VALUE
@@ -104,6 +119,7 @@ object MediaMuxerUtil {
                             videoBufferInfo.flags = videoExtractor.sampleFlags
                             muxer.writeSampleData(outVideoTrackIndex, videoBuffer, videoBufferInfo)
                             lastVideoPts = samplePts
+                            videoSamplesWritten++
                         }
                         videoExtractor.advance()
                     }
@@ -120,12 +136,28 @@ object MediaMuxerUtil {
                             audioBufferInfo.flags = audioExtractor.sampleFlags
                             muxer.writeSampleData(outAudioTrackIndex, audioBuffer, audioBufferInfo)
                             lastAudioPts = samplePts
+                            audioSamplesWritten++
                         }
                         audioExtractor.advance()
                     }
                 }
             }
 
+            if (videoSamplesWritten == 0 || audioSamplesWritten == 0) {
+                throw IOException(
+                    "No samples written: video=$videoSamplesWritten audio=$audioSamplesWritten",
+                )
+            }
+
+            // Stop and release before publishing the output. A stop failure must make
+            // the operation fail and must never replace an existing successful file.
+            muxer.stop()
+            muxerStarted = false
+            muxer.release()
+            muxer = null
+
+            DownloadFileOutput.commit(requireNotNull(temporaryOutput), outFile)
+            temporaryOutput = null
             Log.i(TAG, "mux succeeded: $outPath")
             return true
         } catch (e: Throwable) {
@@ -134,10 +166,12 @@ object MediaMuxerUtil {
         } finally {
             runCatching { videoExtractor?.release() }
             runCatching { audioExtractor?.release() }
-            runCatching {
-                muxer?.stop()
-                muxer?.release()
+            if (muxerStarted) {
+                runCatching { muxer?.stop() }
+                muxerStarted = false
             }
+            runCatching { muxer?.release() }
+            runCatching { temporaryOutput?.let { if (it.exists()) it.delete() } }
         }
     }
 }
