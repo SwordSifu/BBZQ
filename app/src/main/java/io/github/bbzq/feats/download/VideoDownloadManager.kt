@@ -285,7 +285,14 @@ object VideoDownloadManager {
                 val success = if (audioFile.exists() && audioFile.length() > 0) {
                     MediaMuxerUtil.mux(videoFile.absolutePath, audioFile.absolutePath, outFile.absolutePath)
                 } else {
-                    DownloadFileOutput.copy(videoFile, outFile)
+                    val copied = DownloadFileOutput.copy(videoFile, outFile)
+                    if (!copied) {
+                        android.util.Log.e(
+                            "BBZQ",
+                            "video-only output publish failed: ${outFile.absolutePath}",
+                        )
+                    }
+                    copied
                 }
                 
                 if (success) {
@@ -293,7 +300,7 @@ object VideoDownloadManager {
                 } else {
                     postProgress(activity, onProgress, "合并失败 (请查看日志)", -1)
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 android.util.Log.e("BBZQ", "downloadAndMux failed", e)
                 e.printStackTrace()
                 postProgress(activity, onProgress, "下载失败: ${e.message}", -1)
