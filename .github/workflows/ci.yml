@@ -211,14 +211,17 @@ jobs:
           done
           if [ "${#missing[@]}" -ne 0 ]; then
             settings_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/settings/secrets/actions"
+            variables_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/settings/variables/actions"
             printf 'Missing required signed-release input(s): %s\n' "${missing[*]}" >&2
-            printf 'Configure them in repository Actions secrets and variables settings: %s\n' "$settings_url" >&2
+            printf 'Configure repository Actions secrets: %s\n' "$settings_url" >&2
+            printf 'Configure repository Actions variables: %s\n' "$variables_url" >&2
             {
               echo '## Signed release configuration required'
               echo
               echo 'Configure the missing repository Actions secrets and variable, then rerun this workflow.'
               echo
-              echo "[Open repository Actions secrets and variables settings]($settings_url)"
+              echo "[Open repository Actions secrets settings]($settings_url)"
+              echo "[Open repository Actions variables settings]($variables_url)"
               echo
               echo 'Missing required signed-release input(s):'
               for required in "${missing[@]}"; do
