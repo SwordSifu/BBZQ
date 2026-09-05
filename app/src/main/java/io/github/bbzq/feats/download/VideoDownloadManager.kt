@@ -12,6 +12,8 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 object VideoDownloadManager {
     private val client = OkHttpClient()
@@ -52,9 +54,9 @@ object VideoDownloadManager {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    val rawBody = response.body?.string().orEmpty()
-                    try {
+                try {
+                    response.use {
+                        val rawBody = response.body?.string().orEmpty()
                         if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
                         val viewJson = JSONObject(rawBody)
                         val code = viewJson.optInt("code", -1)
@@ -69,10 +71,10 @@ object VideoDownloadManager {
                         if (cid <= 0L) throw Exception("未找到视频 cid [ID: $realBvid]")
                         
                         fetchPlayUrl(activity, realBvid, cid, cookie, onResult)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        postResult(activity, onResult, null, e.message ?: "解析视频信息失败")
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    postResult(activity, onResult, null, e.message ?: "解析视频信息失败")
                 }
             }
         })
@@ -97,9 +99,9 @@ object VideoDownloadManager {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    val rawBody = response.body?.string().orEmpty()
-                    try {
+                try {
+                    response.use {
+                        val rawBody = response.body?.string().orEmpty()
                         if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
                         val playurlJson = JSONObject(rawBody)
                         val code = playurlJson.optInt("code", -1)
@@ -153,11 +155,11 @@ object VideoDownloadManager {
                             throw Exception("未解析到有效画质 [BVID: $bvid]")
                         }
                         postResult(activity, onResult, resultList, null)
-                    } catch (e: Exception) {
-                        android.util.Log.e("BBZQ", "fetchPlayUrl failed", e)
-                        e.printStackTrace()
-                        postResult(activity, onResult, null, e.message ?: "解析 playurl 失败")
                     }
+                } catch (e: Exception) {
+                    android.util.Log.e("BBZQ", "fetchPlayUrl failed", e)
+                    e.printStackTrace()
+                    postResult(activity, onResult, null, e.message ?: "解析 playurl 失败")
                 }
             }
         })
@@ -186,29 +188,59 @@ object VideoDownloadManager {
         }
 
         Thread {
-            val taskId = System.currentTimeMillis()
-            val tempDir = File(activity.cacheDir, "bbzq_dl").apply { mkdirs() }
-            val videoFile = File(tempDir, "${bvid}_video_$taskId.m4s")
-            val audioFile = File(tempDir, "${bvid}_audio_$taskId.m4s")
-            val publicDir = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "BBZQ").apply { mkdirs() }
-            val outFile = File(publicDir, "$bvid.mp4")
+            var videoFileForCleanup: File? = null
+            var audioFileForCleanup: File? = null
 
             try {
+                val taskId = System.currentTimeMillis()
+                val tempDir = File(activity.cacheDir, "bbzq_dl")
+                if (!tempDir.exists() && !tempDir.mkdirs() && !tempDir.isDirectory) {
+                    throw IOException("无法创建临时下载目录: ${tempDir.absolutePath}")
+                }
+                if (!tempDir.isDirectory) {
+                    throw IOException("临时下载路径不是目录: ${tempDir.absolutePath}")
+                }
+
+                val videoFile = File(tempDir, "${bvid}_video_$taskId.m4s")
+                val audioFile = File(tempDir, "${bvid}_audio_$taskId.m4s")
+                videoFileForCleanup = videoFile
+                audioFileForCleanup = audioFile
+
+                val publicDir = File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS,
+                    ),
+                    "BBZQ",
+                )
+                if (!publicDir.exists() && !publicDir.mkdirs() && !publicDir.isDirectory) {
+                    throw IOException("无法创建下载目录: ${publicDir.absolutePath}")
+                }
+                if (!publicDir.isDirectory) {
+                    throw IOException("下载路径不是目录: ${publicDir.absolutePath}")
+                }
+                val outFile = File(publicDir, "$bvid.mp4")
+
                 postProgress(activity, onProgress, "正在并行下载视频与音频...", 0)
 
-                var videoError: Throwable? = null
-                var audioError: Throwable? = null
-                var videoPercent = 0
-                var audioPercent = 0
+                val videoError = AtomicReference<Throwable?>(null)
+                val audioError = AtomicReference<Throwable?>(null)
+                val videoPercent = AtomicInteger(0)
+                val audioPercent = AtomicInteger(0)
 
                 val videoThread = Thread {
                     try {
                         downloadFile(videoUrl, videoFile) { p ->
-                            videoPercent = p
-                            postProgress(activity, onProgress, "下载中: 视频 $p% / 音频 $audioPercent%", (videoPercent + audioPercent) / 2)
+                            videoPercent.set(p)
+                            val audio = audioPercent.get()
+                            postProgress(
+                                activity,
+                                onProgress,
+                                "下载中: 视频 $p% / 音频 $audio%",
+                                downloadProgress(p, audio),
+                            )
                         }
                     } catch (t: Throwable) {
-                        videoError = t
+                        videoError.set(t)
                     }
                 }
 
@@ -216,14 +248,20 @@ object VideoDownloadManager {
                     try {
                         if (audioUrl.isNotBlank()) {
                             downloadFile(audioUrl, audioFile) { p ->
-                                audioPercent = p
-                                postProgress(activity, onProgress, "下载中: 视频 $videoPercent% / 音频 $p%", (videoPercent + audioPercent) / 2)
+                                audioPercent.set(p)
+                                val video = videoPercent.get()
+                                postProgress(
+                                    activity,
+                                    onProgress,
+                                    "下载中: 视频 $video% / 音频 $p%",
+                                    downloadProgress(video, p),
+                                )
                             }
                         } else {
-                            audioPercent = 100
+                            audioPercent.set(100)
                         }
                     } catch (t: Throwable) {
-                        audioError = t
+                        audioError.set(t)
                     }
                 }
 
@@ -233,14 +271,21 @@ object VideoDownloadManager {
                 videoThread.join()
                 audioThread.join()
 
-                if (videoError != null) throw videoError!!
-                if (audioError != null) throw audioError!!
+                videoError.get()?.let { throw it }
+                audioError.get()?.let { throw it }
+
+                if (!videoFile.isFile || videoFile.length() <= 0L) {
+                    throw IOException("视频下载结果为空")
+                }
+                if (audioUrl.isNotBlank() && (!audioFile.isFile || audioFile.length() <= 0L)) {
+                    throw IOException("音频下载结果为空")
+                }
 
                 postProgress(activity, onProgress, "正在合并 MP4 音视频轨道...", 95)
                 val success = if (audioFile.exists() && audioFile.length() > 0) {
                     MediaMuxerUtil.mux(videoFile.absolutePath, audioFile.absolutePath, outFile.absolutePath)
                 } else {
-                    videoFile.renameTo(outFile)
+                    DownloadFileOutput.copy(videoFile, outFile)
                 }
                 
                 if (success) {
@@ -253,11 +298,16 @@ object VideoDownloadManager {
                 e.printStackTrace()
                 postProgress(activity, onProgress, "下载失败: ${e.message}", -1)
             } finally {
-                runCatching { if (videoFile.exists()) videoFile.delete() }
-                runCatching { if (audioFile.exists()) audioFile.delete() }
+                runCatching { videoFileForCleanup?.let { if (it.exists()) it.delete() } }
+                runCatching { audioFileForCleanup?.let { if (it.exists()) it.delete() } }
                 isDownloading.set(false)
             }
         }.start()
+    }
+
+    private fun downloadProgress(videoPercent: Int, audioPercent: Int): Int {
+        val completedPercent = (videoPercent.coerceIn(0, 100) + audioPercent.coerceIn(0, 100)) / 2
+        return (completedPercent * DOWNLOAD_PROGRESS_MAX / 100).coerceIn(0, DOWNLOAD_PROGRESS_MAX)
     }
 
     private fun postProgress(activity: Activity, onProgress: (String, Int) -> Unit, msg: String, percent: Int) {
@@ -281,12 +331,12 @@ object VideoDownloadManager {
             
             val body = response.body ?: throw IOException("Empty response body")
             val contentLength = body.contentLength()
+            var totalBytesRead = 0L
+            var lastPercent = 0
             
             body.byteStream().buffered(128 * 1024).use { input ->
                 FileOutputStream(dest).buffered(128 * 1024).use { output ->
                     val buffer = ByteArray(128 * 1024)
-                    var totalBytesRead = 0L
-                    var lastPercent = 0
                     
                     while (true) {
                         val bytesRead = input.read(buffer)
@@ -295,7 +345,9 @@ object VideoDownloadManager {
                         totalBytesRead += bytesRead
                         
                         if (contentLength > 0) {
-                            val percent = ((totalBytesRead * 100) / contentLength).toInt()
+                            val percent = ((totalBytesRead * 100) / contentLength)
+                                .toInt()
+                                .coerceIn(0, 100)
                             if (percent != lastPercent) {
                                 lastPercent = percent
                                 progressCallback(percent)
@@ -305,6 +357,25 @@ object VideoDownloadManager {
                     output.flush()
                 }
             }
+
+            if (totalBytesRead <= 0L) {
+                throw IOException("Empty download response")
+            }
+            if (contentLength > 0L && totalBytesRead != contentLength) {
+                throw IOException(
+                    "Incomplete download: expected=$contentLength actual=$totalBytesRead",
+                )
+            }
+            if (dest.length() != totalBytesRead) {
+                throw IOException(
+                    "Downloaded file size mismatch: expected=$totalBytesRead actual=${dest.length()}",
+                )
+            }
+            if (lastPercent < 100) {
+                progressCallback(100)
+            }
         }
     }
+
+    private const val DOWNLOAD_PROGRESS_MAX = 90
 }
