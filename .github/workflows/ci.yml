@@ -186,12 +186,11 @@ jobs:
           if-no-files-found: error
 
   release_gate:
-    # Publishing is opt-in from workflow_dispatch and fails closed without all inputs.
+    # Master pushes publish automatically; workflow_dispatch remains opt-in and fails closed without all inputs.
     name: Check signed release prerequisites
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
     needs:
       - version
-      - test
     runs-on: ubuntu-latest
     steps:
       - name: Validate signing inputs
@@ -211,7 +210,24 @@ jobs:
             fi
           done
           if [ "${#missing[@]}" -ne 0 ]; then
+            settings_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/settings/secrets/actions"
+            variables_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/settings/variables/actions"
             printf 'Missing required signed-release input(s): %s\n' "${missing[*]}" >&2
+            printf 'Configure repository Actions secrets: %s\n' "$settings_url" >&2
+            printf 'Configure repository Actions variables: %s\n' "$variables_url" >&2
+            {
+              echo '## Signed release configuration required'
+              echo
+              echo 'Configure the missing repository Actions secrets and variable, then rerun this workflow.'
+              echo
+              echo "[Open repository Actions secrets settings]($settings_url)"
+              echo "[Open repository Actions variables settings]($variables_url)"
+              echo
+              echo 'Missing required signed-release input(s):'
+              for required in "${missing[@]}"; do
+                printf -- '- `%s`\n' "$required"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
@@ -231,7 +247,7 @@ jobs:
 
   build_signed:
     name: Build signed ${{ matrix.label }}
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
     needs:
       - version
       - test
@@ -342,7 +358,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
     needs:
       - version
       - test
